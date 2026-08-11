@@ -121,6 +121,9 @@ class Engine:
         self.disconnected_since = None
         self.stale_action_state = None
         self.pre_stale_state = None
+        self.last_variables = {}
+        self.last_seen_at = None
+        self.stale_notified = False
 
     def evaluate(self, variables, now):
         for state in self.states:
@@ -213,11 +216,30 @@ class Engine:
         )
         return context
 
-    async def notify(self, desired, rule, variables, event="action"):
+    async def notify(self, desired, rule, variables, event="action", extra=None):
         settings = self.profile.notifications
-        if not settings.wants(event):
+        subscription = "stale" if event == "recovered" else event
+        if not settings.wants(subscription):
             return
         if event == "action" and not settings.rule_enabled(rule):
+            return
+
+        if event in ("stale", "recovered"):
+            merged = dict(self.last_variables)
+            merged.update(variables or {})
+            context = self.context(desired, rule, merged, event)
+            context["last_seen"] = self.last_seen_at or "unknown"
+            context.update(extra or {})
+            template = (
+                settings.stale_template
+                if event == "stale"
+                else settings.recovered_template
+            )
+            body = render(template, context)
+            title = render(settings.title, context)
+            await self.notifier.send(
+                title, body, priority=settings.priority, key=event, force=True
+            )
             return
 
         context = self.context(desired, rule, variables, event)
@@ -473,9 +495,6 @@ class Engine:
                     force=True,
                 )
                 self.stale_reported = True
-                await self.notify(
-                    None, None, {"reason": "mqtt disconnected"}, event="stale"
-                )
 
             if self.profile.on_stale == "stop":
                 raise RuntimeError("stopping: MQTT session disconnected")
@@ -486,6 +505,21 @@ class Engine:
                 await self.apply(
                     session, self.profile.safe_state, "mqtt disconnected safe state", now
                 )
+
+            if not self.stale_notified:
+                self.stale_notified = True
+                await self.notify(
+                    None,
+                    None,
+                    {},
+                    event="stale",
+                    extra={
+                        "reason": "connection to Anker lost",
+                        "action": self._word(self.profile.safe_state)
+                        if self.profile.on_stale == "safe_state"
+                        else "left as it was",
+                    },
+                )
             return
 
         if self.disconnected_since is not None:
@@ -494,8 +528,15 @@ class Engine:
                 f"{format_duration(now - self.disconnected_since)}",
                 force=True,
             )
+            outage = format_duration(now - self.disconnected_since)
             self.disconnected_since = None
             await self.undo_stale_action(session, now)
+            if self.stale_notified:
+                self.stale_notified = False
+                self.stale_reported = False
+                await self.notify(
+                    None, None, {}, event="recovered", extra={"outage": outage}
+                )
 
         if age is not None and self.profile.stale_after and age > self.profile.stale_after:
             if not self.stale_reported:
@@ -506,7 +547,20 @@ class Engine:
                 )
                 self.stale_reported = True
 
-                await self.notify(None, None, {"reason": "telemetry stale"}, event="stale")
+                if not self.stale_notified:
+                    self.stale_notified = True
+                    await self.notify(
+                        None,
+                        None,
+                        {},
+                        event="stale",
+                        extra={
+                            "reason": f"no message for {format_duration(age)}",
+                            "action": self._word(self.profile.safe_state)
+                            if self.profile.on_stale == "safe_state"
+                            else "left as it was",
+                        },
+                    )
 
             if self.profile.on_stale == "stop":
                 raise RuntimeError("stopping: telemetry went stale")
@@ -525,6 +579,8 @@ class Engine:
             await self.undo_stale_action(session, now)
 
         variables = derived_values(self.anker_profile, status)
+        self.last_variables = dict(variables)
+        self.last_seen_at = stamp()
 
         missing = sorted(
             name

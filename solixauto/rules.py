@@ -194,6 +194,18 @@ class NotificationSettings:
         self.channels = list(channels or [])
 
         self.template = str(raw.get("template") or DEFAULT_NOTIFY_TEMPLATE)
+        self.stale_template = str(
+            raw.get("stale_template")
+            or (
+                "{source_name}: telemetry lost ({reason}). Last seen battery "
+                "{battery_soc}% at {last_seen}. {target_name} was turned {action} "
+                "as a precaution."
+            )
+        )
+        self.recovered_template = str(
+            raw.get("recovered_template")
+            or "{source_name}: telemetry is back after {outage}. Rules resumed."
+        )
         self.title = str(raw.get("title") or "{profile}")
         self.throttle = parse_duration(
             raw.get("throttle", DEFAULT_NOTIFY_THROTTLE), "notifications.throttle"
