@@ -24,7 +24,7 @@ You need a SOLIX device that connects to WiFi, a Shelly plug on the same
 network, and your Anker account login.
 
 ```bash
-git clone https://github.com/JustinOros/anker-shelly-bridge.git
+git clone https://github.com/YOURNAME/anker-shelly-bridge.git
 cd anker-shelly-bridge
 ./start.sh
 ```
@@ -118,6 +118,29 @@ a power profile cannot execute code.
 
 Full rule reference with worked examples: [docs/RULES.md](docs/RULES.md).
 The same document is written into your data directory during setup.
+
+---
+
+## Live monitor
+
+```bash
+solixauto monitor
+```
+
+Opens a dashboard at `http://127.0.0.1:8765` showing every device you have
+saved: battery level, solar in, grid in, load out, and each Shelly's switch
+state and draw. It refreshes every five seconds and keeps a rolling chart.
+
+Each device gets a **power bus** — solar and grid drawn from the left, load
+from the right, all to one scale. If the left outweighs the right, the battery
+is filling. Light and dark themes, remembered between visits.
+
+Add `--host 0.0.0.0` to reach it from a phone on the same network.
+
+Anker readings come from a running automation rather than a second cloud
+connection, so start a service first. Two MQTT sessions on one Anker account
+invite rate limiting. Shelly devices are polled directly over local HTTP and
+always show live.
 
 ---
 
@@ -303,6 +326,7 @@ solixauto fields <device>           field names usable in rules
 solixauto status <device>           live telemetry
 solixauto switch <plug> on|off      manual control
 solixauto conflicts <plug>          automation set on the plug itself
+solixauto monitor                   live dashboard in your browser
 
 solixauto new-profile <name>        scaffold a power profile
 solixauto profiles                  list power profiles

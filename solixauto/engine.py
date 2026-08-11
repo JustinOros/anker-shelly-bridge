@@ -445,6 +445,34 @@ class Engine:
             force=True,
         )
 
+    def publish_live(self, variables, age):
+        identity = self.anker_profile.get("identity", {})
+        serial = identity.get("serial") or "unknown"
+
+        payload = {
+            "serial": serial,
+            "name": identity.get("name") or identity.get("model") or serial,
+            "model": identity.get("model") or identity.get("part_number") or "",
+            "updated": stamp(),
+            "epoch": time.time(),
+            "age_seconds": round(age) if age is not None else None,
+            "profile": self.profile.name,
+            "target_state": self.last_commanded,
+            "floor_latched": self.floor_latched,
+            "values": {
+                key: value
+                for key, value in variables.items()
+                if isinstance(value, (int, float, bool)) or value is None
+            },
+        }
+
+        try:
+            paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+            destination = paths.STATE_DIR / f"live-{serial}.json"
+            destination.write_text(json.dumps(payload), encoding="utf-8")
+        except Exception:
+            pass
+
     def save_state(self, desired, reason):
         record = {
             "profile": self.profile.name,
@@ -581,6 +609,7 @@ class Engine:
         variables = derived_values(self.anker_profile, status)
         self.last_variables = dict(variables)
         self.last_seen_at = stamp()
+        self.publish_live(variables, age)
 
         missing = sorted(
             name

@@ -364,6 +364,47 @@ def cmd_service(args):
         print("machine set System Settings > Energy Saver to prevent sleep.")
 
 
+def cmd_monitor(args):
+    import webbrowser
+    from . import monitor as monitor_module
+
+    try:
+        server, sampler = monitor_module.serve(
+            port=args.port, interval=args.interval, host=args.host
+        )
+    except OSError as err:
+        fail(
+            f"could not start on {args.host}:{args.port}: {err}\n"
+            "Another monitor may already be running. Try --port 8766."
+        )
+
+    url = f"http://{args.host}:{args.port}"
+    print()
+    print(f"Power monitor running at {url}")
+    print()
+    print("  Readings come from a running automation, so start one first if the")
+    print("  Anker box says it has no live data:")
+    print(f"    {paths.command('service <profile>')}")
+    print()
+    print("  Press Ctrl-C to stop.")
+
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print()
+        print("stopped")
+    finally:
+        sampler.stop()
+        server.shutdown()
+        server.server_close()
+
+
 def cmd_conflicts(args):
     from .shelly import (
         ShellyTarget,
@@ -1320,6 +1361,23 @@ def build_parser():
     status_parser.add_argument("--interval", type=float, default=5.0)
     status_parser.add_argument("--settle", type=int, default=45)
     status_parser.set_defaults(func=cmd_status)
+
+    monitor_parser = subparsers.add_parser(
+        "monitor", help="live dashboard in your browser"
+    )
+    monitor_parser.add_argument("--port", type=int, default=8765)
+    monitor_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="use 0.0.0.0 to reach it from other devices on your network",
+    )
+    monitor_parser.add_argument(
+        "--interval", type=float, default=5.0, help="seconds between samples"
+    )
+    monitor_parser.add_argument(
+        "--no-open", action="store_true", help="do not open a browser"
+    )
+    monitor_parser.set_defaults(func=cmd_monitor)
 
     service_parser = subparsers.add_parser(
         "service", help="run a power profile in the background at login"
