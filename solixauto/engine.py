@@ -238,9 +238,17 @@ class Engine:
         if floor and floor.field not in names:
             names.insert(0, floor.field)
 
-        readings = " ".join(
+        parts_readings = [
             f"{name}={variables.get(name)}" for name in names if name in variables
-        )
+        ]
+
+        for name in self.profile.monitor_fields:
+            if name in names:
+                continue
+            value = variables.get(name, None)
+            parts_readings.append(f"{name}={'-' if value is None else value}")
+
+        readings = " ".join(parts_readings)
 
         parts = []
         for state in self.states:
@@ -506,6 +514,13 @@ class Engine:
             )
         else:
             self.report("battery floor: NONE SET", force=True)
+
+        if self.profile.monitor_fields:
+            self.report(
+                "also logging (not used by any rule): "
+                + ", ".join(self.profile.monitor_fields),
+                force=True,
+            )
         self.report(f"target: {self.target.label} channel {self.target.channel}", force=True)
 
         async with aiohttp.ClientSession() as session:

@@ -340,6 +340,13 @@ class PowerProfile:
             raise ProfileError("at least one rule is required")
         self.rules = [Rule(item, index) for index, item in enumerate(raw_rules)]
 
+        monitor = raw.get("monitor_fields") or []
+        if isinstance(monitor, str):
+            monitor = [monitor]
+        if not isinstance(monitor, list):
+            raise ProfileError("monitor_fields must be a list of field names")
+        self.monitor_fields = [str(entry).strip() for entry in monitor if str(entry).strip()]
+
         self.notifications = NotificationSettings(raw.get("notifications") or {})
 
         safety = raw.get("safety") or {}
@@ -454,6 +461,13 @@ def validate(profile):
 
         for warning in automation_warnings(device_automation, profile.target_channel):
             notes.append(f"target device has its own automation: {warning}")
+
+    for name in profile.monitor_fields:
+        if name not in available:
+            notes.append(
+                f"monitor_fields lists {name!r}, which this device does not report. "
+                "It will show as '-' in the log."
+            )
 
     if profile.battery_floor is None:
         notes.append(
