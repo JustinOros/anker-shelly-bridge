@@ -24,7 +24,7 @@ You need a SOLIX device that connects to WiFi, a Shelly plug on the same
 network, and your Anker account login.
 
 ```bash
-git clone https://github.com/YOURNAME/anker-shelly-bridge.git
+git clone https://github.com/JustinOros/anker-shelly-bridge.git
 cd anker-shelly-bridge
 ./start.sh
 ```
