@@ -1,0 +1,86 @@
+# Example power profile: solar failover
+#
+# Links one Anker SOLIX device (read-only data source) to one Shelly switch
+# channel (the actuator). Rules decide when the Shelly turns on or off.
+# The Anker device is never commanded.
+#
+# Replace the source and target filenames with your own. List them with:
+#     solixauto devices
+#
+# Validate before running:
+#     solixauto run solar-failover --test
+
+name: solar-failover
+description: >
+  Charge from the grid when the battery is low or solar cannot keep up.
+  Stay off the grid whenever the sun is carrying the load.
+
+enabled: true
+
+poll_interval: 10s
+
+source:
+  profile: REPLACE-WITH-YOUR-ANKER-PROFILE.yaml
+  stale_after: 300s
+  on_stale: safe_state
+
+target:
+  profile: REPLACE-WITH-YOUR-SHELLY-PROFILE.yaml
+  channel: 0
+
+# The plug supplies power TO the Anker device, so every failure path should
+# end with charging enabled rather than disabled.
+safe_state: on
+
+# Checked before every rule below, bypasses the rate limits, and latches once
+# tripped so nothing can turn charging off again until the battery recovers.
+safety:
+  battery_floor:
+    at_or_below: 20
+    release_at: 40
+    then: target.on
+    for: 30s
+    notify: true
+    notify_release: true
+
+notifications:
+  enabled: true
+  channels: [ntfy]
+  title: "{profile}"
+  template: >-
+    {source_name} battery {battery_soc}%, solar {pv_total}W.
+    {target_name} turned {action}.
+  throttle: 5m
+  on:
+    - action
+    - stale
+
+rules:
+  - name: top up from grid when low
+    when: battery_soc <= 35
+    for: 2m
+    then: target.on
+
+  - name: stop charging when full enough
+    when: battery_soc >= 85
+    for: 2m
+    then: target.off
+
+  # pv_surplus is solar minus everything drawing from the unit. Positive means
+  # the sun is covering the load and the excess is charging the battery.
+  #
+  # The long dwell matters: a variable load such as a desktop PC will cross
+  # zero constantly, and a short dwell would cycle the relay all afternoon.
+  - name: solar is carrying the load, stay off the grid
+    when: pv_surplus > 200 and battery_soc > 50
+    for: 15m
+    then: target.off
+
+  - name: solar cannot keep up, fall back to the grid
+    when: pv_surplus < -200 and battery_soc <= 50
+    for: 15m
+    then: target.on
+
+limits:
+  min_seconds_between_actions: 60
+  max_actions_per_hour: 20

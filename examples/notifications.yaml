@@ -1,0 +1,81 @@
+# Notification channels for solixauto.
+#
+# Secrets live here, NOT in your power profiles, so profiles stay safe to
+# share or commit. This file is created with owner-only permissions.
+#
+# Enable a channel by setting enabled: true and filling in its settings.
+# Test with:
+#     solixauto notify-test
+#     solixauto notify-test --channel ntfy
+#
+# ---------------------------------------------------------------------
+# ntfy - recommended. Free, no account needed.
+#   1. install the ntfy app on your phone
+#   2. subscribe to a topic name that nobody else would guess
+#   3. put that topic below
+# Anyone who knows the topic name can read your alerts, so make it long.
+# ---------------------------------------------------------------------
+ntfy:
+  enabled: false
+  server: https://ntfy.sh
+  topic: solix-CHANGE-ME-to-something-random
+  priority: default
+  token: ""
+
+# ---------------------------------------------------------------------
+# Pushover - $5 one time per platform. Very reliable delivery.
+# Get both keys from https://pushover.net
+# ---------------------------------------------------------------------
+pushover:
+  enabled: false
+  user_key: ""
+  api_token: ""
+  priority: 0
+  sound: ""
+
+# ---------------------------------------------------------------------
+# Email over SMTP.
+# For Gmail you must use an App Password, not your normal password.
+# ---------------------------------------------------------------------
+email:
+  enabled: false
+  host: smtp.gmail.com
+  port: 587
+  use_tls: true
+  username: ""
+  password: ""
+  sender: ""
+  recipients: []
+
+# ---------------------------------------------------------------------
+# Telegram - free. Create a bot with @BotFather, then message it once and
+# read your chat id from https://api.telegram.org/bot<TOKEN>/getUpdates
+# ---------------------------------------------------------------------
+telegram:
+  enabled: false
+  bot_token: ""
+  chat_id: ""
+
+# ---------------------------------------------------------------------
+# Generic webhook. Works with Slack and Discord incoming webhooks.
+# format: slack | discord | json | form
+# ---------------------------------------------------------------------
+webhook:
+  enabled: false
+  url: ""
+  format: json
+  method: POST
+
+# ---------------------------------------------------------------------
+# Desktop notification on the machine running the engine.
+# Useful while testing. Does not reach your phone.
+#
+#   macOS    uses osascript, built in
+#   Linux    uses notify-send, from libnotify-bin
+#   Windows  uses PowerShell, built in
+#
+# sound is macOS only and ignored elsewhere.
+# ---------------------------------------------------------------------
+desktop:
+  enabled: false
+  sound: Submarine

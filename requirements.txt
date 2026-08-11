@@ -1,0 +1,6 @@
+aiohttp
+pyyaml
+zeroconf
+python-dotenv
+ifaddr
+qrcode
