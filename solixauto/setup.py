@@ -418,7 +418,7 @@ def run_setup(prompt, choose, confirm):
         )
         print()
         try:
-            asyncio.run(anker.discover())
+            asyncio.run(anker.discover(explain_skipped=True))
         except Exception as err:
             print(f"  Discovery failed: {type(err).__name__}: {err}")
             return False

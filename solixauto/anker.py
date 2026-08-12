@@ -108,6 +108,12 @@ def online_hint(info):
     return None
 
 
+BLUETOOTH_ONLY_SHORT = (
+    "Bluetooth-only models cannot be used as a source. "
+    "Details: --explain-skipped"
+)
+
+
 def clean_status(raw):
     return {key: value for key, value in (raw or {}).items() if key not in IGNORED_KEYS}
 
@@ -390,7 +396,13 @@ async def close_session(api, websession):
 
 
 async def discover(
-    settle=45, only_pn=None, only_sn=None, skip=None, include_offline=False, verbose=True
+    settle=45,
+    only_pn=None,
+    only_sn=None,
+    skip=None,
+    include_offline=False,
+    explain_skipped=False,
+    verbose=True,
 ):
     paths.ensure_dirs()
 
@@ -419,10 +431,12 @@ async def discover(
                 continue
 
             if not include_offline and online_hint(info) is False:
-                print()
-                print(f"  {serial} - {model_label(part_number_of(info))}")
-                print("    not cloud connected, skipping without subscribing.")
-                print(BLUETOOTH_ONLY_HINT)
+                label = model_label(part_number_of(info))
+                print(f"  {serial} - {label}: not cloud connected, skipped.")
+                if explain_skipped:
+                    print(BLUETOOTH_ONLY_HINT)
+                else:
+                    print(f"    {BLUETOOTH_ONLY_SHORT}")
                 continue
 
             targets[serial] = info

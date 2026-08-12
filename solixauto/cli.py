@@ -172,6 +172,7 @@ def cmd_discover_anker(args):
             only_sn=args.sn,
             skip=args.skip,
             include_offline=args.include_offline,
+            explain_skipped=args.explain_skipped,
         )
     )
     print()
@@ -1318,6 +1319,11 @@ def build_parser():
         "--include-offline",
         action="store_true",
         help="try devices the cloud reports as not connected",
+    )
+    anker_parser.add_argument(
+        "--explain-skipped",
+        action="store_true",
+        help="print the full reason when a device is skipped",
     )
     anker_parser.set_defaults(func=cmd_discover_anker)
 
