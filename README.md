@@ -1,7 +1,7 @@
 # anker-shelly-bridge
 
 <p align="center">
-  <img src="docs/screenshot.jpg" alt="Live monitor dashboard showing battery level, solar input, grid input and load for an Anker SOLIX F3000, with Shelly switch states and a rolling history chart" width="900">
+  <img src="screenshot.jpg" alt="Live monitor dashboard showing battery level, solar input, grid input and load for an Anker SOLIX F3000, with Shelly switch states and a rolling history chart" width="900">
 </p>
 
 Automate a Shelly smart plug from live Anker SOLIX telemetry.
