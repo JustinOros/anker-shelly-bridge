@@ -777,7 +777,7 @@ PAGE = """<!doctype html>
   canvas { width: 100%; height: 300px; display: block; }
 
   .event-scroll {
-    max-height: 232px;
+    max-height: 194px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--rule) transparent;
