@@ -15,6 +15,8 @@ from .shelly import ShellyTarget
 
 
 EVENT_HISTORY = 200
+TELEMETRY_ROTATE_EVERY = 360
+TELEMETRY_MAX_AGE_DAYS = 90
 
 
 FIELD_WORDS = {
@@ -255,6 +257,7 @@ class Engine:
         self.last_variables = {}
         self.last_seen_at = None
         self.stale_notified = False
+        self.telemetry_writes = 0
 
     def evaluate(self, variables, now):
         for state in self.states:
@@ -706,6 +709,53 @@ class Engine:
         except Exception:
             pass
 
+    def record_telemetry(self, serial, variables):
+        values = {
+            key: value
+            for key, value in variables.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        if not values:
+            return
+
+        line = json.dumps({"t": time.time(), "v": values})
+
+        try:
+            paths.TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
+            destination = paths.TELEMETRY_DIR / f"{serial}.jsonl"
+            with open(destination, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except Exception:
+            return
+
+        self.telemetry_writes += 1
+        if self.telemetry_writes % TELEMETRY_ROTATE_EVERY == 0:
+            self.rotate_telemetry(destination)
+
+    def rotate_telemetry(self, destination, max_age_days=TELEMETRY_MAX_AGE_DAYS):
+        cutoff = time.time() - (max_age_days * 86400)
+        try:
+            lines = destination.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return
+
+        kept = []
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            if record.get("t", 0) >= cutoff:
+                kept.append(line)
+
+        if len(kept) != len(lines):
+            try:
+                destination.write_text(
+                    "\n".join(kept) + ("\n" if kept else ""), encoding="utf-8"
+                )
+            except Exception:
+                pass
+
     def save_state(self, desired, reason):
         record = {
             "profile": self.profile.name,
@@ -851,6 +901,8 @@ class Engine:
         self.last_variables = dict(variables)
         self.last_seen_at = stamp()
         self.publish_live(variables, age)
+        serial = self.anker_profile.get("identity", {}).get("serial") or "unknown"
+        self.record_telemetry(serial, variables)
 
         missing = sorted(
             name

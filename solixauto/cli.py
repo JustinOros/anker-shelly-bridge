@@ -1252,6 +1252,98 @@ def load_power_profile(reference):
         fail(f"{path.name}: {type(err).__name__}: {err}")
 
 
+def pick_power_profile():
+    found = [
+        path
+        for path in list_profiles(paths.POWER_PROFILE_DIR)
+        if path.name != "README.md"
+    ]
+
+    if not found:
+        fail(
+            "no power profiles found. Run: "
+            + paths.command("new-profile <name>")
+        )
+        return None
+
+    if len(found) == 1:
+        return found[0]
+
+    options = []
+    for path in found:
+        try:
+            profile = PowerProfile(path)
+            label = f"{path.name} ({len(profile.active_rules())} rule(s))"
+        except Exception:
+            label = f"{path.name} (invalid)"
+        options.append((path, label))
+
+    print()
+    print("Which power profile?")
+    print()
+    return choose(options, "Choose")
+
+
+def cmd_tune(args):
+    from . import tune
+
+    if args.profile:
+        path = paths.resolve_profile(args.profile, "power")
+        if path is None:
+            fail(f"no power profile matching {args.profile!r}")
+    else:
+        path = pick_power_profile()
+
+    try:
+        analysis = tune.Analysis(path, since_hours=args.since_hours)
+    except tune.TuneError as err:
+        fail(str(err))
+        return
+
+    proposal = analysis.propose()
+
+    print()
+    print(f"{path.name}")
+    print()
+    print(analysis.describe(proposal))
+    print()
+
+    rules_yaml = analysis.render_rules_yaml(proposal)
+
+    if args.show_yaml:
+        print("Proposed rules: block")
+        print()
+        print(rules_yaml)
+
+    if args.dry_run:
+        print("Dry run, nothing was changed.")
+        return
+
+    print(
+        "This replaces the rules: block in the profile. The safety floor, "
+        "notifications, and limits are left untouched."
+    )
+    print()
+    if not confirm(f"Apply these rules to {path.name}?", default=False):
+        print("Not applied.")
+        return
+
+    tune.apply_rules(path, rules_yaml)
+
+    try:
+        reloaded = PowerProfile(path)
+    except ProfileError as err:
+        fail(f"the updated profile failed to validate: {err}")
+        return
+
+    print()
+    print(f"Applied. {path.name} now has {len(reloaded.active_rules())} rule(s).")
+    print(
+        f"Restart the service for this to take effect: "
+        f"{paths.command('service ' + path.stem)}"
+    )
+
+
 def cmd_validate(args):
     profile = load_power_profile(args.profile)
     problems, notes = validate(profile)
@@ -1574,6 +1666,29 @@ def build_parser():
     )
     validate_parser.add_argument("profile")
     validate_parser.set_defaults(func=cmd_validate)
+
+    tune_parser = subparsers.add_parser(
+        "tune",
+        help="propose new rule thresholds from recorded telemetry history",
+    )
+    tune_parser.add_argument("profile", nargs="?", default=None)
+    tune_parser.add_argument(
+        "--since-hours",
+        type=float,
+        default=None,
+        help="only use telemetry from the last N hours (default: all recorded)",
+    )
+    tune_parser.add_argument(
+        "--show-yaml",
+        action="store_true",
+        help="print the proposed rules: block before asking to apply it",
+    )
+    tune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the proposal and exit without asking to apply anything",
+    )
+    tune_parser.set_defaults(func=cmd_tune)
 
     run_parser = subparsers.add_parser("run", help="run a power profile")
     run_parser.add_argument("profile")

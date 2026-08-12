@@ -13,6 +13,7 @@ SHELLY_PROFILE_DIR = DEVICE_PROFILE_DIR / "shelly"
 POWER_PROFILE_DIR = BASE_DIR / "power-profiles"
 STATE_DIR = BASE_DIR / "state"
 LOG_DIR = BASE_DIR / "logs"
+TELEMETRY_DIR = STATE_DIR / "telemetry"
 
 RUNTIME_STATE = STATE_DIR / "runtime.json"
 ENGINE_LOG = LOG_DIR / "automation.log"
@@ -25,6 +26,7 @@ ALL_DIRS = [
     POWER_PROFILE_DIR,
     STATE_DIR,
     LOG_DIR,
+    TELEMETRY_DIR,
 ]
 
 
