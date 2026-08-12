@@ -1226,14 +1226,13 @@ function renderAnker(devices) {
     if (!d.live) {
       return '<div class="device"><div class="device-head">'
         + nameCell(d, 'anker', 'device-name')
-        + '<span class="device-meta">' + d.model + '</span></div>'
+        + '</div>'
         + '<p class="empty">No live readings. Live data comes from a running '
         + 'automation.<br>Start one with <b>solixauto service &lt;profile&gt;</b>.</p></div>';
     }
     return '<div class="device">'
       + '<div class="device-head">'
       + nameCell(d, 'anker', 'device-name')
-      + '<span class="device-meta">' + d.model + ' &middot; ' + (d.profile || '') + '</span>'
       + (d.floor_latched ? '<span class="pill unknown">FLOOR LATCHED</span>' : '')
       + '</div>'
       + '<div class="readouts">'
