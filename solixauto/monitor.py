@@ -373,6 +373,65 @@ PAGE = """<!doctype html>
     color: var(--ink-soft);
   }
 
+  .panel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin: 0 0 18px;
+    padding: 0;
+    background: none;
+    border: 0;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .panel-toggle:hover { color: var(--ink); }
+  .panel-toggle:focus-visible { outline: 2px solid var(--solar); outline-offset: 3px; }
+
+  .panel-toggle .caret {
+    font-size: 9px;
+    line-height: 1;
+    transition: transform .18s ease;
+    flex: 0 0 auto;
+  }
+
+  .panel-toggle[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+  .panel-toggle[aria-expanded="false"] { margin-bottom: 0; }
+
+  .panel-toggle .rule-line {
+    flex: 1 1 auto;
+    height: 1px;
+    background: transparent;
+    transition: background-color .18s ease;
+  }
+
+  .panel-toggle[aria-expanded="false"] .rule-line { background: var(--rule); }
+
+  .panel-toggle .count {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    opacity: 0;
+    transition: opacity .18s ease;
+    flex: 0 0 auto;
+  }
+
+  .panel-toggle[aria-expanded="false"] .count { opacity: 1; }
+
+  section[data-collapsed="true"] .panel-body { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel-toggle .caret,
+    .panel-toggle .rule-line,
+    .panel-toggle .count { transition: none; }
+  }
+
   .device { padding: 16px 0; border-top: 1px solid var(--rule); }
   .device:first-of-type { border-top: none; padding-top: 0; }
 
@@ -734,23 +793,46 @@ PAGE = """<!doctype html>
   </header>
 
   <section>
-    <h2>Anker devices</h2>
-    <div id="anker"></div>
+    <button type="button" class="panel-toggle" data-panel="anker" aria-expanded="true">
+      <span class="caret">▼</span>
+      <span>Anker devices</span>
+      <span class="rule-line"></span>
+      <span class="count" id="count-anker"></span>
+    </button>
+    <div class="panel-body"><div id="anker"></div></div>
   </section>
 
   <section>
-    <h2>Shelly devices</h2>
-    <div id="shelly"></div>
+    <button type="button" class="panel-toggle" data-panel="shelly" aria-expanded="true">
+      <span class="caret">▼</span>
+      <span>Shelly devices</span>
+      <span class="rule-line"></span>
+      <span class="count" id="count-shelly"></span>
+    </button>
+    <div class="panel-body"><div id="shelly"></div></div>
   </section>
 
   <section>
-    <h2>Actions</h2>
-    <div class="event-scroll"><div id="events"></div></div>
+    <button type="button" class="panel-toggle" data-panel="actions" aria-expanded="true">
+      <span class="caret">▼</span>
+      <span>Actions</span>
+      <span class="rule-line"></span>
+      <span class="count" id="count-actions"></span>
+    </button>
+    <div class="panel-body">
+      <div class="event-scroll"><div id="events"></div></div>
+    </div>
   </section>
 
   <section>
+    <button type="button" class="panel-toggle" data-panel="history" aria-expanded="true">
+      <span class="caret">▼</span>
+      <span>History</span>
+      <span class="rule-line"></span>
+      <span class="count" id="count-history"></span>
+    </button>
+    <div class="panel-body">
     <div class="chart-head">
-      <h2 style="margin:0">History</h2>
       <div class="legend">
         <span><i class="swatch sw-solar"></i>solar W</span>
         <span><i class="swatch sw-grid"></i>grid in W</span>
@@ -759,6 +841,7 @@ PAGE = """<!doctype html>
       </div>
     </div>
     <canvas id="chart"></canvas>
+    </div>
   </section>
 
 </div>
@@ -1128,6 +1211,45 @@ function drawChart(history, devices) {
 let latest = null;
 let paused = false;
 
+const PANEL_KEY = 'solixauto-collapsed';
+
+function loadCollapsed() {
+  try {
+    const raw = localStorage.getItem(PANEL_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+
+let collapsed = loadCollapsed();
+
+function applyPanel(key, isCollapsed) {
+  const button = document.querySelector('.panel-toggle[data-panel="' + key + '"]');
+  if (!button) return;
+  const section = button.closest('section');
+  button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+  section.setAttribute('data-collapsed', isCollapsed ? 'true' : 'false');
+}
+
+function togglePanel(key) {
+  collapsed[key] = !collapsed[key];
+  try { localStorage.setItem(PANEL_KEY, JSON.stringify(collapsed)); } catch (e) {}
+  applyPanel(key, collapsed[key]);
+  if (!collapsed[key] && key === 'history' && latest) {
+    drawChart(latest.history, latest.anker);
+  }
+}
+
+function setCount(key, text) {
+  const node = document.getElementById('count-' + key);
+  if (node) node.textContent = text;
+}
+
+document.querySelectorAll('.panel-toggle').forEach(button => {
+  const key = button.dataset.panel;
+  applyPanel(key, !!collapsed[key]);
+  button.addEventListener('click', () => togglePanel(key));
+});
+
 function applyTheme(mode) {
   document.documentElement.setAttribute('data-theme', mode);
   document.getElementById('lightBtn').setAttribute('aria-pressed', mode === 'light');
@@ -1161,7 +1283,20 @@ async function refresh() {
     renderAnker(data.anker);
     renderShelly(data.shelly);
     renderEvents(data.events, data.multi);
-    drawChart(data.history, data.anker);
+
+    const live = data.anker.filter(d => d.live);
+    const battery = live.length && live[0].battery_soc !== null
+      ? live[0].battery_soc + '%' : '';
+    setCount('anker', data.anker.length
+      ? data.anker.length + (battery ? ', ' + battery : '') : 'none');
+    const on = data.shelly.filter(d => d.state === true).length;
+    setCount('shelly', data.shelly.length
+      ? data.shelly.length + ', ' + on + ' on' : 'none');
+    setCount('actions', (data.events || []).length
+      ? (data.events || []).length + ' logged' : 'none yet');
+    setCount('history', (data.history || []).length + ' samples');
+
+    if (!collapsed.history) drawChart(data.history, data.anker);
   } catch (err) {
     failures++;
     document.getElementById('dot').className = 'dot stale';
