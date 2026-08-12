@@ -663,6 +663,51 @@ def cmd_status(args):
         print("stopped")
 
 
+def record_manual_event(profile_path, target, desired):
+    import json
+    import time
+    from datetime import datetime
+
+    from .profiles import load_yaml as _load
+
+    try:
+        identity = (_load(profile_path).get("identity") or {})
+    except Exception:
+        identity = {}
+
+    event = {
+        "epoch": time.time(),
+        "when": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "state": bool(desired),
+        "cause": "manual",
+        "profile": None,
+        "rule": None,
+        "condition": None,
+        "reason": "switched manually from the command line",
+        "target": identity.get("name") or identity.get("model") or target.host,
+        "target_channel": target.channel,
+        "source": None,
+        "source_serial": None,
+        "values": {},
+    }
+
+    path = paths.STATE_DIR / "events-manual.json"
+    try:
+        paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        history = []
+        if path.exists():
+            try:
+                history = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                history = []
+        if not isinstance(history, list):
+            history = []
+        history.append(event)
+        path.write_text(json.dumps(history[-200:]), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def cmd_switch(args):
     from .shelly import ShellyTarget
     import aiohttp
@@ -703,6 +748,8 @@ def cmd_switch(args):
                 await target.set_state(session, desired)
             except Exception as err:
                 fail(f"{type(err).__name__}: {err}")
+
+            record_manual_event(path, target, desired)
 
             await asyncio.sleep(1.0)
             confirmed = await target.get_state(session)

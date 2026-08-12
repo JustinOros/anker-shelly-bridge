@@ -8,10 +8,13 @@ from datetime import datetime
 import aiohttp
 
 from . import paths
-from .profiles import load_yaml
+from .profiles import load_yaml, slugify
 from .notify import Notifier, render
 from .rules import derived_values, format_duration, validate
 from .shelly import ShellyTarget
+
+
+EVENT_HISTORY = 200
 
 
 async def interruptible_sleep(seconds):
@@ -150,7 +153,15 @@ class Engine:
         return None
 
     async def apply(
-        self, session, desired, reason, now, rule=None, variables=None, force=False
+        self,
+        session,
+        desired,
+        reason,
+        now,
+        rule=None,
+        variables=None,
+        force=False,
+        cause="rule",
     ):
         if self.last_commanded is desired:
             return False
@@ -176,6 +187,7 @@ class Engine:
         self.recent_actions.append(now)
         self.report(f"turned {self._word(desired)} - {reason}")
         self.save_state(desired, reason)
+        self.record_event(desired, reason, rule, variables, cause=cause)
         await self.notify(desired, rule, variables, event="action")
         return True
 
@@ -341,6 +353,7 @@ class Engine:
             "restored after telemetry recovered",
             now,
             force=True,
+            cause="recovered",
         )
 
     async def check_floor(self, session, variables, now):
@@ -377,6 +390,7 @@ class Engine:
                 now,
                 variables=variables,
                 force=True,
+                cause="floor",
             )
             return True
 
@@ -404,6 +418,7 @@ class Engine:
             now,
             variables=variables,
             force=True,
+            cause="floor",
         )
 
         if floor.notify:
@@ -444,6 +459,58 @@ class Engine:
             key="battery_floor_release" if released else "battery_floor",
             force=True,
         )
+
+    def record_event(self, desired, reason, rule, variables, cause="rule"):
+        source_identity = self.anker_profile.get("identity", {})
+        target_identity = self.target.profile.get("identity", {})
+
+        detail = {}
+        for key in (
+            "battery_soc",
+            "pv_total",
+            "pv_surplus",
+            "output_power_total",
+            "ac_input_power",
+        ):
+            value = (variables or {}).get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                detail[key] = round(value)
+
+        event = {
+            "epoch": time.time(),
+            "when": stamp(),
+            "state": bool(desired),
+            "cause": cause,
+            "profile": self.profile.name,
+            "rule": rule.name if rule else None,
+            "condition": rule.when_source if rule else None,
+            "reason": reason,
+            "target": target_identity.get("name")
+            or target_identity.get("model")
+            or self.target.host,
+            "target_channel": self.target.channel,
+            "source": source_identity.get("name")
+            or source_identity.get("model")
+            or source_identity.get("serial"),
+            "source_serial": source_identity.get("serial"),
+            "values": detail,
+        }
+
+        path = paths.STATE_DIR / f"events-{slugify(self.profile.name)}.json"
+        try:
+            paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+            history = []
+            if path.exists():
+                try:
+                    history = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    history = []
+            if not isinstance(history, list):
+                history = []
+            history.append(event)
+            path.write_text(json.dumps(history[-EVENT_HISTORY:]), encoding="utf-8")
+        except Exception:
+            pass
 
     def publish_live(self, variables, age):
         identity = self.anker_profile.get("identity", {})
@@ -531,7 +598,11 @@ class Engine:
                     self.pre_stale_state = self.last_commanded
                     self.stale_action_state = self.profile.safe_state
                 await self.apply(
-                    session, self.profile.safe_state, "mqtt disconnected safe state", now
+                    session,
+                    self.profile.safe_state,
+                    "connection to Anker lost",
+                    now,
+                    cause="stale",
                 )
 
             if not self.stale_notified:
@@ -597,7 +668,11 @@ class Engine:
                     self.pre_stale_state = self.last_commanded
                     self.stale_action_state = self.profile.safe_state
                 await self.apply(
-                    session, self.profile.safe_state, "stale telemetry safe state", now
+                    session,
+                    self.profile.safe_state,
+                    "telemetry went stale",
+                    now,
+                    cause="stale",
                 )
             return
 

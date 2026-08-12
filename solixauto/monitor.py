@@ -17,7 +17,14 @@ class Sampler:
     def __init__(self, interval=5.0, history=HISTORY_SIZE):
         self.interval = interval
         self.history = deque(maxlen=history)
-        self.snapshot = {"anker": [], "shelly": [], "updated": None, "engine": False}
+        self.snapshot = {
+            "anker": [],
+            "shelly": [],
+            "events": [],
+            "multi": False,
+            "updated": None,
+            "engine": False,
+        }
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = None
@@ -196,9 +203,26 @@ class Sampler:
             )
         return devices
 
+    def _events(self):
+        events = []
+        if not paths.STATE_DIR.exists():
+            return events
+
+        for path in sorted(paths.STATE_DIR.glob("events-*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, list):
+                events.extend(entry for entry in data if isinstance(entry, dict))
+
+        events.sort(key=lambda entry: entry.get("epoch", 0), reverse=True)
+        return events[:60]
+
     def _sample(self):
         anker = self._anker_devices()
         shelly = self._shelly_devices()
+        events = self._events()
 
         point = {"t": time.time()}
         for device in anker:
@@ -216,6 +240,8 @@ class Sampler:
             self.snapshot = {
                 "anker": anker,
                 "shelly": shelly,
+                "events": events,
+                "multi": len(anker) > 1 or len(shelly) > 1,
                 "updated": time.strftime("%H:%M:%S"),
                 "engine": any(d["live"] for d in anker),
                 "interval": self.interval,
@@ -558,6 +584,106 @@ PAGE = """<!doctype html>
 
   canvas { width: 100%; height: 300px; display: block; }
 
+  .event-scroll {
+    max-height: 232px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+  }
+
+  .event-scroll::-webkit-scrollbar { width: 9px; }
+  .event-scroll::-webkit-scrollbar-track { background: transparent; }
+  .event-scroll::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border: 2px solid var(--panel-raised);
+  }
+  .event-scroll::-webkit-scrollbar-thumb:hover { background: var(--ink-soft); }
+
+  .event {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 9px 12px 9px 0;
+    border-top: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+
+  .event:first-child { border-top: none; }
+
+  .event-time {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+  }
+
+  .event-state {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-align: center;
+    padding: 1px 0;
+    border: 1px solid currentColor;
+    flex: 0 0 38px;
+  }
+
+  .event-state.on { color: var(--charge); }
+  .event-state.off { color: var(--ink-soft); }
+
+  .event-target {
+    font-size: 13px;
+    font-weight: 600;
+    flex: 0 0 auto;
+    max-width: 20ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .event-why {
+    font-size: 13px;
+    color: var(--ink);
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .event-cause {
+    display: inline-block;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    margin-right: 7px;
+    border: 1px solid var(--rule);
+    color: var(--ink-soft);
+    vertical-align: 1px;
+  }
+
+  .event-cause.floor { color: var(--alert); border-color: currentColor; }
+  .event-cause.stale { color: var(--solar); border-color: currentColor; }
+
+  .event-detail {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    flex: 0 0 auto;
+  }
+
+  .event-day {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 14px 0 6px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .event-day:first-child { border-top: none; padding-top: 0; }
+
   .empty {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 12px;
@@ -586,18 +712,23 @@ PAGE = """<!doctype html>
   </header>
 
   <section>
-    <h2>Anker SOLIX</h2>
+    <h2>Anker devices</h2>
     <div id="anker"></div>
   </section>
 
   <section>
-    <h2>Shelly switches</h2>
+    <h2>Shelly devices</h2>
     <div id="shelly"></div>
   </section>
 
   <section>
+    <h2>Actions</h2>
+    <div class="event-scroll"><div id="events"></div></div>
+  </section>
+
+  <section>
     <div class="chart-head">
-      <h2 style="margin:0">Recent history</h2>
+      <h2 style="margin:0">History</h2>
       <div class="legend">
         <span><i class="swatch sw-solar"></i>solar W</span>
         <span><i class="swatch sw-grid"></i>grid in W</span>
@@ -806,6 +937,82 @@ function renderShelly(devices) {
     + '</tbody></table>';
 }
 
+const CAUSE_LABEL = {
+  rule: 'rule',
+  floor: 'safety floor',
+  stale: 'telemetry lost',
+  recovered: 'recovered',
+  manual: 'manual'
+};
+
+function dayLabel(epoch) {
+  const d = new Date(epoch * 1000);
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, today)) return 'Today';
+  if (same(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function clockLabel(epoch) {
+  const d = new Date(epoch * 1000);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function eventDetail(e) {
+  const v = e.values || {};
+  const bits = [];
+  if (v.battery_soc !== undefined) bits.push('battery ' + v.battery_soc + '%');
+  if (v.pv_total !== undefined) bits.push('solar ' + v.pv_total + 'W');
+  if (v.output_power_total !== undefined) bits.push('load ' + v.output_power_total + 'W');
+  if (v.ac_input_power) bits.push('grid ' + v.ac_input_power + 'W');
+  if (!bits.length) return '';
+  const who = e.source ? esc(e.source) + ': ' : '';
+  return who + bits.join(', ');
+}
+
+function renderEvents(events, multi) {
+  const box = document.getElementById('events');
+
+  if (!events || !events.length) {
+    box.innerHTML = '<p class="empty">Every change to a plug will appear here '
+      + 'with the reason for it.</p>';
+    return;
+  }
+
+  let html = '';
+  let lastDay = null;
+
+  events.forEach(e => {
+    const day = dayLabel(e.epoch);
+    if (day !== lastDay) {
+      html += '<div class="event-day">' + day + '</div>';
+      lastDay = day;
+    }
+
+    const cause = e.cause || 'rule';
+    const label = CAUSE_LABEL[cause] || cause;
+    const why = e.rule ? esc(e.rule) : esc(e.reason || 'changed');
+    const detail = eventDetail(e);
+    const tip = [e.condition, detail].filter(Boolean).join('  |  ');
+
+    html += '<div class="event"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>'
+      + '<div class="event-time">' + clockLabel(e.epoch) + '</div>'
+      + '<div class="event-state ' + (e.state ? 'on' : 'off') + '">'
+      + (e.state ? 'ON' : 'OFF') + '</div>'
+      + '<div class="event-target">' + esc(e.target || 'switch') + '</div>'
+      + '<div class="event-why">'
+      + '<span class="event-cause ' + cause + '">' + label + '</span>'
+      + why
+      + '</div>'
+      + (detail ? '<div class="event-detail">' + detail + '</div>' : '')
+      + '</div>';
+  });
+
+  box.innerHTML = html;
+}
+
 function drawChart(history, devices) {
   const canvas = document.getElementById('chart');
   const ratio = window.devicePixelRatio || 1;
@@ -928,6 +1135,7 @@ async function refresh() {
     document.getElementById('dot').className = data.engine ? 'dot' : 'dot stale';
     renderAnker(data.anker);
     renderShelly(data.shelly);
+    renderEvents(data.events, data.multi);
     drawChart(data.history, data.anker);
   } catch (err) {
     failures++;
