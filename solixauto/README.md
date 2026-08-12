@@ -34,15 +34,15 @@ On Windows, double-click `start.bat`.
 That is the whole install. `start.sh` creates its own Python environment,
 installs everything, and hands over to a guided setup with eight steps:
 
-1. **Dependencies** — installs whatever is missing
-2. **Anker account** — your login, stored locally with owner-only permissions
-3. **Find your SOLIX device** — connects and captures every field it reports
-4. **Find your Shelly plug** — scans the local network
-5. **Check the plug** — finds schedules and timers already on it that would
+1. **Dependencies**: installs whatever is missing
+2. **Anker account**: your login, stored locally with owner-only permissions
+3. **Find your SOLIX device**: connects and captures every field it reports
+4. **Find your Shelly plug**: scans the local network
+5. **Check the plug**: finds schedules and timers already on it that would
    conflict, and offers to remove them
-6. **Notifications** — optional push to your phone, with a QR code to scan
-7. **Rules** — pick a strategy and answer a few questions in plain language
-8. **Test, then start** — a live dry run against your hardware that switches
+6. **Notifications**: optional push to your phone, with a QR code to scan
+7. **Rules**: pick a strategy and answer a few questions in plain language
+8. **Test, then start**: a live dry run against your hardware that switches
    nothing, then offers to install a background service
 
 Nothing touches your hardware until step 8 asks. Ctrl-C is safe at any point.
@@ -131,7 +131,7 @@ Opens a dashboard at `http://127.0.0.1:8765` showing every device you have
 saved: battery level, solar in, grid in, load out, and each Shelly's switch
 state and draw. It refreshes every five seconds and keeps a rolling chart.
 
-Each device gets a **power bus** — solar and grid drawn from the left, load
+Each device gets a **power bus**: solar and grid drawn from the left, load
 from the right, all to one scale. If the left outweighs the right, the battery
 is filling. Light and dark themes, remembered between visits.
 
@@ -147,7 +147,7 @@ always show live.
 ## Safety
 
 Controlling the power supply to a battery has a specific failure mode: turn
-charging off, let the battery run flat, and the device drops off the network —
+charging off, let the battery run flat, and the device drops off the network,
 at which point nothing can turn charging back on. The design is built around
 preventing that.
 
@@ -162,7 +162,7 @@ safety:
 ```
 
 Checked before any rule. It **bypasses the rate limits**, **outranks every
-rule**, and **latches** once tripped — nothing can turn the plug off again
+rule**, and **latches** once tripped, so nothing can turn the plug off again
 until the battery reaches `release_at`. Without the latch, a solar rule could
 release it at 21% straight back into whatever drained it.
 
@@ -184,7 +184,7 @@ exits. When the plug supplies power to the SOLIX device, `safe_state: on` means
 losing sight of it fails toward charging.
 
 Rules are also never evaluated against **partial** telemetry. If a field a rule
-needs has not arrived yet, nothing is evaluated at all — including the floor.
+needs has not arrived yet, nothing is evaluated at all, including the floor.
 
 ### Rate limits
 
@@ -358,9 +358,9 @@ Anything the upstream
 [anker-solix-api](https://github.com/thomluther/anker-solix-api) library
 supports **and** that holds a cloud connection.
 
-Models pairing with the Anker app over Bluetooth only — press a button on the
-unit to make it discoverable — publish nothing to the MQTT broker and cannot be
-used. The F2000 / PowerHouse 767 works this way. Discovery detects and skips
+Models that pair with the Anker app over Bluetooth only, where you press a
+button on the unit to make it discoverable, publish nothing to the MQTT broker
+and cannot be used. The F2000 / PowerHouse 767 works this way. Discovery detects and skips
 them.
 
 Shelly Gen1 and Gen2+ including Gen4, over local HTTP.
@@ -373,7 +373,7 @@ combinations should work; reports welcome.
 ## Known limitations
 
 - Field mappings come from a community reverse-engineering effort, not from
-  Anker. Fields ending in `?` or starting with `unknown_` are unconfirmed —
+  Anker. Fields ending in `?` or starting with `unknown_` are unconfirmed, so
   do not build rules on them.
 - **Verify any field against the Anker app before trusting it.** The solar
   fields in particular should be watched in daylight and compared to the app
@@ -407,11 +407,11 @@ credentials, network, and notification status in one place.
 
 ## Documentation
 
-- [docs/RULES.md](docs/RULES.md) — power profile format, every option, worked
+- [docs/RULES.md](docs/RULES.md): power profile format, every option, worked
   automation examples
-- [docs/TESTING.md](docs/TESTING.md) — staged checklist for validating a new
+- [docs/TESTING.md](docs/TESTING.md): staged checklist for validating a new
   setup before trusting it with real hardware
-- [examples/](examples/) — a solar failover profile and an annotated
+- [examples/](examples/): a solar failover profile and an annotated
   notifications config
 
 ## Contributing

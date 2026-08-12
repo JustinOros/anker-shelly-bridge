@@ -50,7 +50,7 @@ Some models pair with the Anker app over Bluetooth only. You press a button on
 the unit to make it discoverable and it holds no persistent cloud connection.
 The F2000 / PowerHouse 767 works this way. Those devices publish nothing to
 Anker's MQTT broker and the broker refuses the subscription with
-`Unspecified error(128)`. They cannot be automation sources here — local
+`Unspecified error(128)`. They cannot be automation sources here. Local
 Bluetooth access would need a different project (SolixBLE).
 
 Discovery skips devices the cloud reports as disconnected before subscribing,
@@ -222,7 +222,7 @@ Check the plug before you walk away.
 ## Before publishing
 
 - [ ] `device-profiles/` and `state/` are gitignored (the generated `.gitignore`
-      covers this, but verify — profiles contain your serial numbers)
+      covers this, but verify, since profiles contain your serial numbers)
 - [ ] `notifications.yaml` is not committed
 - [ ] no `.env` in the repo
 - [ ] `git log -p | grep -i -E "password|token|@gmail|user_key"` comes back empty
