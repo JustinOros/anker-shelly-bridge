@@ -1,7 +1,7 @@
 # anker-shelly-bridge
 
 <p align="center">
-  <img src="docs\screenshot.jpg" alt="Live monitor dashboard showing battery level, solar input, grid input and load for an Anker SOLIX F3000, with Shelly switch states and a rolling history chart" width="900">
+  <img src="docs/screenshot.jpg" alt="Live monitor dashboard showing battery level, solar input, grid input and load for an Anker SOLIX F3000, with Shelly switch states and a rolling history chart" width="900">
 </p>
 
 Automate a Shelly smart plug from live Anker SOLIX telemetry.
@@ -35,8 +35,9 @@ cd anker-shelly-bridge
 
 On Windows, double-click `start.bat`.
 
-That is the whole install. `start.sh` creates its own Python environment,
-installs everything, and hands over to a guided setup with eight steps:
+That is the whole install. `start.sh` builds a Python environment for this
+project at `~/solix-automation/venv`, installs everything into it, and hands
+over to a guided setup with eight steps:
 
 1. **Dependencies**: installs whatever is missing
 2. **Anker account**: your login, stored locally with owner-only permissions
@@ -53,6 +54,10 @@ Nothing touches your hardware until step 8 asks. Ctrl-C is safe at any point.
 
 Needs Python 3.12+ and git. If they are missing, `start.sh` tells you how to
 install them for your platform.
+
+Everything the project needs lives in its own environment, so installing or
+removing packages elsewhere on the machine cannot break your automation. The
+background service is pinned to that same interpreter.
 
 ---
 

@@ -23,6 +23,22 @@ def service_label(profile_name):
     return f"com.solixauto.{profile_name}"
 
 
+def preferred_python():
+    candidates = [
+        paths.BASE_DIR / "venv" / "bin" / "python",
+        paths.BASE_DIR / "venv" / "Scripts" / "python.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            probe = subprocess.run(
+                [str(candidate), "-c", "import anker_solix_api.api"],
+                capture_output=True,
+            )
+            if probe.returncode == 0:
+                return str(candidate)
+    return sys.executable
+
+
 def script_path():
     if sys.argv and sys.argv[0]:
         return str(Path(sys.argv[0]).resolve())
@@ -84,7 +100,7 @@ def launchd_plist(profile_name):
 
     <key>ProgramArguments</key>
     <array>
-      <string>{sys.executable}</string>
+      <string>{preferred_python()}</string>
       <string>{script}</string>
       <string>run</string>
       <string>{profile_name}</string>
@@ -125,7 +141,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart={sys.executable} {script} run {profile_name} --quiet
+ExecStart={preferred_python()} {script} run {profile_name} --quiet
 WorkingDirectory={Path(script).parent}
 {env_lines}Restart=always
 RestartSec=60
@@ -142,7 +158,7 @@ def windows_instructions(profile_name):
 others. Use Task Scheduler:
 
   schtasks /create /tn "{label}" /sc onlogon /rl highest ^
-    /tr "\\"{sys.executable}\\" \\"{script}\\" run {profile_name} --quiet"
+    /tr "\\"{preferred_python()}\\" \\"{script}\\" run {profile_name} --quiet"
 
 To remove it:
 
