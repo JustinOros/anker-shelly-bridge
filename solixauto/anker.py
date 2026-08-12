@@ -201,6 +201,60 @@ def introspect_writable(device):
     return writable
 
 
+def find_duplicates(serial, keep):
+    import yaml
+
+    duplicates = []
+    if not paths.ANKER_PROFILE_DIR.exists() or not serial:
+        return duplicates
+
+    wanted = str(serial).lower()
+
+    for candidate in sorted(paths.ANKER_PROFILE_DIR.iterdir()):
+        if candidate.suffix not in (".yaml", ".yml") or candidate == keep:
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        identity = data.get("identity") or {}
+        if str(identity.get("serial") or "").lower() == wanted:
+            duplicates.append(candidate)
+
+    return duplicates
+
+
+def profiles_referencing(path):
+    import yaml
+
+    referencing = []
+    if not paths.POWER_PROFILE_DIR.exists():
+        return referencing
+
+    names = {path.name.lower(), path.stem.lower()}
+
+    for candidate in sorted(paths.POWER_PROFILE_DIR.iterdir()):
+        if candidate.suffix not in (".yaml", ".yml"):
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        source = (data.get("source") or {}).get("profile")
+        if source and str(source).lower() in names:
+            referencing.append(candidate)
+
+    return referencing
+
+
 def build_profile(device_sn, info, status, device):
     part_number = part_number_of(info) or "unknown"
 
@@ -534,8 +588,29 @@ async def discover(
                         f"{slugify(serial)}"
                     ).lower()
                 destination = paths.ANKER_PROFILE_DIR / f"{stem}.yaml"
+
+                stale = find_duplicates(serial, destination)
+
                 save_yaml(destination, profile, header=PROFILE_HEADER)
                 written.append(destination)
+
+                for other in stale:
+                    print()
+                    print(
+                        f"    WARNING: {other.name} also describes this device."
+                    )
+                    users = profiles_referencing(other)
+                    if users:
+                        names = ", ".join(p.name for p in users)
+                        print(f"             {names} still points at the old file.")
+                        print(
+                            f"             Change its source to {destination.name}, "
+                            "then remove:"
+                        )
+                    else:
+                        print("             Two profiles for one device is confusing.")
+                        print("             Remove the old one:")
+                    print(f"               rm {other}")
 
                 if verbose:
                     print(
