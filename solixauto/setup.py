@@ -670,7 +670,65 @@ def setup_notifications(confirm):
     return True
 
 
+def existing_profiles():
+    found = []
+    for path in list_profiles(paths.POWER_PROFILE_DIR):
+        if path.name == "README.md":
+            continue
+        try:
+            from .rules import PowerProfile
+
+            profile = PowerProfile(path)
+        except Exception:
+            continue
+        found.append((path, profile))
+    return found
+
+
+def keep_existing(prompt, choose, confirm):
+    found = existing_profiles()
+    if not found:
+        return None
+
+    print()
+    print(f"  You already have {len(found)} automation profile(s):")
+    print()
+    for path, profile in found:
+        rules = len(profile.active_rules())
+        floor = profile.battery_floor
+        detail = f"{rules} rule(s)"
+        if floor:
+            detail += f", floor at {floor.threshold:g}%"
+        print(f"    {path.name}  ({detail})")
+
+    print()
+    print("  Writing a new one would replace a file of the same name, losing any")
+    print("  thresholds you have tuned.")
+    print()
+
+    if len(found) == 1:
+        path, profile = found[0]
+        if confirm(f"  Keep using {path.name} as it is?", default=True):
+            return path
+        return None
+
+    options = [(str(path), path.name) for path, _ in found]
+    options.append(("__new__", "Write a new profile instead"))
+    print("  Which do you want to use?")
+    print()
+    chosen = choose(options, "  Choose")
+    if chosen == "__new__":
+        return None
+    return Path(chosen)
+
+
 def build_profile(source, target, channel, fields, prompt, choose, confirm):
+    kept = keep_existing(prompt, choose, confirm)
+    if kept is not None:
+        print()
+        print(f"  Keeping {kept.name} unchanged.")
+        return kept
+
     print()
     note(
         """
@@ -760,11 +818,14 @@ def build_profile(source, target, channel, fields, prompt, choose, confirm):
         content = content.replace(token, value)
 
     destination = paths.POWER_PROFILE_DIR / f"{name}.yaml"
-    if destination.exists() and not confirm(
-        f"  {destination.name} already exists. Overwrite?", default=False
-    ):
-        print("  Keeping the existing file.")
-        return destination
+    if destination.exists():
+        print()
+        print(f"  WARNING: {destination.name} already exists and will be")
+        print("  replaced. Any thresholds you tuned in it will be lost.")
+        print()
+        if not confirm("  Overwrite it?", default=False):
+            print("  Keeping the existing file unchanged.")
+            return destination
 
     write_text(destination, content)
     print()
