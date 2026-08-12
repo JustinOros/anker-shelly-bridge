@@ -759,9 +759,9 @@ function busBar(pv, ac, out) {
     + '<i class="out-load" style="width:' + w(out) + '"></i>'
     + '</div>'
     + '<div class="bus-key">'
-    + '<em><i class="swatch sw-solar"></i>in from sun</em>'
-    + '<em><i class="swatch sw-grid"></i>in from grid</em>'
-    + '<em><i class="swatch sw-load"></i>out to load</em>'
+    + '<em><i class="swatch sw-solar"></i>input (solar)</em>'
+    + '<em><i class="swatch sw-grid"></i>input (grid)</em>'
+    + '<em><i class="swatch sw-load"></i>output (load)</em>'
     + '</div>';
 }
 
