@@ -17,6 +17,134 @@ from .shelly import ShellyTarget
 EVENT_HISTORY = 200
 
 
+FIELD_WORDS = {
+    "pv_surplus": "solar surplus",
+    "pv_total": "solar output",
+    "output_power_total": "the load",
+    "ac_input_power": "grid input",
+    "temperature": "temperature",
+    "usb_total": "USB output",
+    "soc_headroom": "room above the floor",
+}
+
+FIELD_UNITS = {
+    "pv_surplus": "W",
+    "pv_total": "W",
+    "output_power_total": "W",
+    "ac_input_power": "W",
+    "usb_total": "W",
+    "temperature": " degrees",
+    "soc_headroom": " points",
+}
+
+COMPARISON_WORDS = {
+    "Lt": "below",
+    "LtE": "at or below",
+    "Gt": "above",
+    "GtE": "at or above",
+    "Eq": "exactly",
+    "NotEq": "not",
+}
+
+
+def describe_clause(node):
+    import ast as _ast
+
+    if not isinstance(node.left, _ast.Name):
+        return None
+    field = node.left.id
+    if field == "battery_soc" or not node.ops or len(node.comparators) != 1:
+        return None
+
+    comparator = node.comparators[0]
+    if not isinstance(comparator, _ast.Constant):
+        return None
+    if not isinstance(comparator.value, (int, float)) or isinstance(
+        comparator.value, bool
+    ):
+        return None
+
+    words = FIELD_WORDS.get(field, field)
+    direction = COMPARISON_WORDS.get(type(node.ops[0]).__name__, "at")
+    unit = FIELD_UNITS.get(field, "")
+    return f"{words} is {direction} {comparator.value:g}{unit}"
+
+
+def explain_rule(rule, at, tree):
+    import ast as _ast
+
+    state = rule.desired_state()
+    action = "Turns the switch on" if state else "Turns the switch off"
+
+    direction = "at"
+    extras = []
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Compare):
+            continue
+        if isinstance(node.left, _ast.Name) and node.left.id == "battery_soc":
+            if node.ops:
+                direction = COMPARISON_WORDS.get(
+                    type(node.ops[0]).__name__, "at"
+                )
+            continue
+        clause = describe_clause(node)
+        if clause:
+            extras.append(clause)
+
+    sentence = f"{action} when the battery is {direction} {at:g}%"
+    if extras:
+        sentence += ", and " + " and ".join(extras)
+    sentence += f". Waits {format_duration(rule.dwell)} first."
+    return sentence
+
+
+def battery_thresholds(rule):
+    import ast as _ast
+
+    points = []
+    try:
+        tree = _ast.parse(rule.when_source, mode="eval")
+    except SyntaxError:
+        return points
+
+    other_fields = {
+        node.id
+        for node in _ast.walk(tree)
+        if isinstance(node, _ast.Name) and node.id != "battery_soc"
+    }
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Compare):
+            continue
+        if not isinstance(node.left, _ast.Name) or node.left.id != "battery_soc":
+            continue
+        if len(node.comparators) != 1:
+            continue
+        comparator = node.comparators[0]
+        if not isinstance(comparator, _ast.Constant):
+            continue
+        if not isinstance(comparator.value, (int, float)):
+            continue
+        if isinstance(comparator.value, bool):
+            continue
+
+        state = rule.desired_state()
+        value = float(comparator.value)
+        points.append(
+            {
+                "at": value,
+                "label": rule.name,
+                "kind": "on" if state else ("off" if state is False else "rule"),
+                "condition": rule.when_source,
+                "explain": explain_rule(rule, value, tree),
+                "compound": bool(other_fields),
+            }
+        )
+
+    return points
+
+
 async def interruptible_sleep(seconds):
     remaining = float(seconds or 0)
     while remaining > 0:
@@ -516,10 +644,48 @@ class Engine:
         identity = self.anker_profile.get("identity", {})
         serial = identity.get("serial") or "unknown"
 
+        thresholds = []
+        floor = self.profile.battery_floor
+        if floor is not None and floor.enabled and floor.field == "battery_soc":
+            thresholds.append(
+                {
+                    "at": floor.threshold,
+                    "label": "safety floor",
+                    "kind": "floor",
+                    "condition": f"battery_soc <= {floor.threshold:g}",
+                    "explain": (
+                        f"Emergency. Turns the switch "
+                        f"{'on' if floor.desired_state() else 'off'} when the "
+                        f"battery reaches {floor.threshold:g}% and holds it there "
+                        f"until {floor.release:g}%. Ignores the rate limits and "
+                        "overrides every rule."
+                    ),
+                    "compound": False,
+                }
+            )
+            thresholds.append(
+                {
+                    "at": floor.release,
+                    "label": "safety floor releases",
+                    "kind": "release",
+                    "condition": f"battery_soc >= {floor.release:g}",
+                    "explain": (
+                        f"The safety floor stops overriding the rules once the "
+                        f"battery reaches {floor.release:g}%."
+                    ),
+                    "compound": False,
+                }
+            )
+
+        for rule in self.profile.active_rules():
+            for point in battery_thresholds(rule):
+                thresholds.append(point)
+
         payload = {
             "serial": serial,
             "name": identity.get("name") or identity.get("model") or serial,
             "model": identity.get("model") or identity.get("part_number") or "",
+            "thresholds": thresholds,
             "updated": stamp(),
             "epoch": time.time(),
             "age_seconds": round(age) if age is not None else None,

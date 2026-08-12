@@ -142,6 +142,7 @@ class Sampler:
                     "updated": (live or {}).get("updated"),
                     "age": (live or {}).get("age_seconds"),
                     "profile": (live or {}).get("profile"),
+                    "thresholds": (live or {}).get("thresholds") or [],
                     "floor_latched": (live or {}).get("floor_latched", False),
                     "battery_soc": values.get("battery_soc"),
                     "output_watts": values.get("output_power_total"),
@@ -573,6 +574,98 @@ PAGE = """<!doctype html>
     color: var(--ink-soft);
     margin-top: 2px;
   }
+
+  .battery {
+    display: grid;
+    grid-template-columns: 96px 1fr 62px;
+    grid-template-rows: auto auto auto;
+    gap: 0 12px;
+    align-items: center;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .battery-track {
+    position: relative;
+    height: 15px;
+    background:
+      repeating-linear-gradient(90deg, transparent 0 5px, var(--etch) 5px 6px);
+    border: 1px solid var(--rule);
+  }
+
+  .battery-fill {
+    display: block;
+    height: 100%;
+    background: var(--charge);
+    transition: width .5s ease, background-color .3s ease;
+  }
+
+  .battery-fill.low { background: var(--solar); }
+  .battery-fill.critical { background: var(--alert); }
+
+  .battery-mark {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 1px;
+    background: var(--ink-soft);
+    opacity: 0.55;
+  }
+
+  .battery-mark.floor { background: var(--alert); opacity: 0.9; width: 2px; }
+
+  .battery-words {
+    grid-column: 2;
+    grid-row: 1;
+    position: relative;
+    height: 15px;
+  }
+
+  .battery-values {
+    grid-column: 2;
+    grid-row: 3;
+    position: relative;
+    height: 15px;
+  }
+
+  .battery > .bus-label { grid-column: 1; grid-row: 2; }
+  .battery > .battery-track { grid-column: 2; grid-row: 2; }
+  .battery > .bus-value { grid-column: 3; grid-row: 2; }
+
+  .battery-tag {
+    position: absolute;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    transform: translateX(-50%);
+  }
+
+  .battery-words .battery-tag { top: 0; }
+  .battery-values .battery-tag { top: 6px; }
+
+  .battery-tag.floor { color: var(--alert); }
+  .battery-tag { cursor: help; }
+  .battery-tag:hover { color: var(--ink); }
+
+  .battery-leader {
+    position: absolute;
+    border-left: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    height: 5px;
+  }
+
+  .battery-words .battery-leader {
+    bottom: 0;
+    border-bottom: none;
+    border-top: 1px solid var(--rule);
+  }
+
+  .battery-values .battery-leader { top: 0; }
+
+  .battery-leader.flat { border-top: none; border-bottom: none; }
   .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 5px; }
   .sw-solar { background: var(--solar); }
   .sw-grid { background: var(--grid); }
@@ -873,6 +966,110 @@ function busBar(pv, ac, out) {
     + '</div>';
 }
 
+function tagTitle(t) {
+  const parts = [];
+  if (t.label) parts.push(t.label);
+  if (t.condition) parts.push(t.condition);
+  if (t.explain) parts.push(t.explain);
+  return parts.join('\\n');
+}
+
+function placeTags(points, words, px) {
+  const charPx = 5.4;
+  let cursor = -Infinity;
+
+  return points.map((t, index) => {
+    const word = words[index];
+    const halfPx = (word.length * charPx) / 2;
+    const wantPx = (t.at / 100) * px;
+    let leftPx = Math.max(wantPx, cursor + halfPx + 6);
+    leftPx = Math.min(leftPx, px - halfPx);
+    cursor = leftPx + halfPx;
+
+    const shifted = Math.abs(leftPx - wantPx) > 1.5;
+    const leaderLeft = Math.min(wantPx, leftPx);
+    const leaderWidth = Math.abs(leftPx - wantPx);
+
+    return '<span class="battery-leader' + (shifted ? '' : ' flat')
+      + '" style="left:' + leaderLeft + 'px;width:'
+      + (shifted ? leaderWidth : 0) + 'px"></span>'
+      + '<span class="battery-tag ' + (t.kind === 'floor' ? 'floor' : '')
+      + '" style="left:' + leftPx + 'px" title="' + esc(tagTitle(t)) + '">'
+      + esc(word) + '</span>';
+  }).join('');
+}
+
+function batteryBar(soc, thresholds) {
+  if (soc === null || soc === undefined) return '';
+
+  const RANK = { floor: 0, on: 1, off: 2, release: 3, rule: 4 };
+
+  const byValue = {};
+  (thresholds || [])
+    .filter(t => typeof t.at === 'number' && t.at >= 0 && t.at <= 100)
+    .forEach(t => {
+      const key = Math.round(t.at);
+      const existing = byValue[key];
+      if (!existing || (RANK[t.kind] ?? 9) < (RANK[existing.kind] ?? 9)) {
+        byValue[key] = t;
+      }
+    });
+
+  const points = Object.values(byValue).sort((a, b) => a.at - b.at);
+
+  const marks = points.map(t =>
+    '<span class="battery-mark ' + (t.kind === 'floor' ? 'floor' : '')
+    + '" style="left:' + t.at + '%" title="'
+    + esc(tagTitle(t)) + '"></span>').join('');
+
+
+
+
+  const floor = points.find(t => t.kind === 'floor');
+  const onPoint = points.find(t => t.kind === 'on');
+  let cls = '';
+  if (floor && soc <= floor.at) cls = 'critical';
+  else if (onPoint && soc <= onPoint.at) cls = 'low';
+
+  const payload = encodeURIComponent(JSON.stringify(points));
+
+  return '<div class="battery" data-points="' + payload + '">'
+    + '<div class="battery-words"></div>'
+    + '<div class="bus-label">battery</div>'
+    + '<div class="battery-track">'
+    + '<i class="battery-fill ' + cls + '" style="width:' + soc + '%"></i>'
+    + marks
+    + '</div>'
+    + '<div class="bus-value">' + Math.round(soc) + ' %</div>'
+    + '<div class="battery-values"></div>'
+    + '</div>';
+}
+
+function layoutBatteryTags() {
+  document.querySelectorAll('.battery').forEach(box => {
+    let points;
+    try {
+      points = JSON.parse(decodeURIComponent(box.dataset.points || '[]'));
+    } catch (e) { return; }
+    if (!points.length) return;
+
+    const track = box.querySelector('.battery-track');
+    const px = track ? track.clientWidth : 0;
+    if (!px) return;
+
+    const words = box.querySelector('.battery-words');
+    const values = box.querySelector('.battery-values');
+    if (words) {
+      words.innerHTML = placeTags(
+        points, points.map(t => t.kind === 'floor' ? 'floor' : 'rule'), px);
+    }
+    if (values) {
+      values.innerHTML = placeTags(
+        points, points.map(t => Math.round(t.at) + '%'), px);
+    }
+  });
+}
+
 let canEdit = false;
 
 function esc(s) {
@@ -1020,6 +1217,7 @@ function renderAnker(devices) {
       + '<div class="readout"><div class="label">Surplus</div><div class="value">' + fmt(d.pv_surplus, 'W') + '</div></div>'
       + '</div>'
       + busBar(d.pv_watts, d.ac_in_watts, d.output_watts)
+      + batteryBar(d.battery_soc, d.thresholds)
       + '</div>';
   }).join('');
 }
@@ -1281,6 +1479,7 @@ async function refresh() {
     document.getElementById('stamp').textContent = data.updated || '--:--:--';
     document.getElementById('dot').className = data.engine ? 'dot' : 'dot stale';
     renderAnker(data.anker);
+    layoutBatteryTags();
     renderShelly(data.shelly);
     renderEvents(data.events, data.multi);
 
@@ -1308,7 +1507,10 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 5000);
-window.addEventListener('resize', () => refresh());
+window.addEventListener('resize', () => {
+  layoutBatteryTags();
+  refresh();
+});
 </script>
 </body>
 </html>
