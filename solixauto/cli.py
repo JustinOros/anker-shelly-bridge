@@ -372,7 +372,10 @@ def cmd_monitor(args):
 
     try:
         server, sampler = monitor_module.serve(
-            port=args.port, interval=args.interval, host=args.host
+            port=args.port,
+            interval=args.interval,
+            host=args.host,
+            allow_remote_edit=args.allow_remote_edit,
         )
     except OSError as err:
         fail(
@@ -387,6 +390,12 @@ def cmd_monitor(args):
     print("  Readings come from a running automation, so start one first if the")
     print("  Anker box says it has no live data:")
     print(f"    {paths.command('service <profile>')}")
+    print()
+    if monitor_module.Handler.allow_edit:
+        print("  Click a device name to rename it.")
+    else:
+        print("  Renaming is disabled because this is reachable from other")
+        print("  machines. Add --allow-remote-edit to permit it.")
     print()
     print("  Press Ctrl-C to stop.")
 
@@ -1383,6 +1392,11 @@ def build_parser():
     )
     monitor_parser.add_argument(
         "--no-open", action="store_true", help="do not open a browser"
+    )
+    monitor_parser.add_argument(
+        "--allow-remote-edit",
+        action="store_true",
+        help="permit renaming devices even when reachable from other machines",
     )
     monitor_parser.set_defaults(func=cmd_monitor)
 

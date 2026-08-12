@@ -7,7 +7,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import paths
-from .profiles import list_profiles, load_yaml
+from .profiles import list_profiles, load_yaml, save_yaml, slugify
 
 HISTORY_SIZE = 2880
 POLL_TIMEOUT = 3
@@ -51,6 +51,68 @@ class Sampler:
             data["fresh"] = True
         return data
 
+    def rename(self, kind, path_name, new_name, on_device=False):
+        directory = (
+            paths.ANKER_PROFILE_DIR if kind == "anker" else paths.SHELLY_PROFILE_DIR
+        )
+        path = directory / path_name
+
+        if path.parent.resolve() != directory.resolve() or not path.exists():
+            raise ValueError("unknown device")
+
+        new_name = str(new_name).strip()
+        if not new_name:
+            raise ValueError("name cannot be empty")
+        if len(new_name) > 60:
+            raise ValueError("name is too long")
+
+        profile = load_yaml(path)
+        identity = profile.setdefault("identity", {})
+        old_name = identity.get("name") or path.stem
+        identity["name"] = new_name
+
+        aliases = list(profile.get("aliases") or [])
+        for candidate in (new_name, old_name, path.stem):
+            if candidate and candidate not in aliases:
+                aliases.append(candidate)
+        profile["aliases"] = aliases
+
+        destination = directory / f"{slugify(new_name).lower()}.yaml"
+        if destination != path and destination.exists():
+            raise ValueError(f"{destination.name} already exists")
+
+        save_yaml(path, profile)
+        if destination != path:
+            path.replace(destination)
+
+        wrote_device = False
+        if on_device and kind == "shelly":
+            wrote_device = self._write_shelly_name(profile, new_name)
+
+        self._sample()
+        return {"file": destination.name, "name": new_name, "on_device": wrote_device}
+
+    def _write_shelly_name(self, profile, new_name):
+        access = profile.get("access") or {}
+        identity = profile.get("identity") or {}
+        host = access.get("host")
+        generation = int(identity.get("generation", 1) or 1)
+
+        if not host or generation < 2:
+            return False
+
+        payload = json.dumps({"config": {"device": {"name": new_name}}}).encode()
+        request = urllib.request.Request(
+            f"http://{host}/rpc/Sys.SetConfig",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=POLL_TIMEOUT) as response:
+                return response.status == 200
+        except Exception:
+            return False
+
     def _anker_devices(self):
         devices = []
         for path in list_profiles(paths.ANKER_PROFILE_DIR):
@@ -65,6 +127,7 @@ class Sampler:
 
             devices.append(
                 {
+                    "file": path.name,
                     "name": identity.get("name") or identity.get("model") or path.stem,
                     "model": identity.get("model") or identity.get("part_number") or "",
                     "serial": serial,
@@ -121,6 +184,7 @@ class Sampler:
 
             devices.append(
                 {
+                    "file": path.name,
                     "name": identity.get("name") or path.stem,
                     "model": identity.get("model") or "",
                     "host": host,
@@ -295,6 +359,52 @@ PAGE = """<!doctype html>
   }
 
   .device-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+
+  .editable {
+    cursor: text;
+    border-bottom: 1px dashed transparent;
+  }
+
+  .editable:hover, .editable:focus-visible {
+    border-bottom-color: var(--ink-soft);
+    outline: none;
+  }
+
+  .editable::after {
+    content: " \270E";
+    font-size: 0.7em;
+    color: var(--ink-soft);
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+
+  .editable:hover::after, .editable:focus-visible::after { opacity: 1; }
+
+  .name-input {
+    font: inherit;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--solar);
+    padding: 1px 5px;
+    width: 22ch;
+    max-width: 100%;
+  }
+
+  .name-input:focus { outline: none; }
+
+  .edit-hint {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    color: var(--ink-soft);
+    margin-left: 8px;
+  }
+
+  .edit-error {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--alert);
+    margin-top: 6px;
+  }
 
   .device-meta {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -524,6 +634,124 @@ function busBar(pv, ac, out) {
     + '</div>';
 }
 
+let canEdit = false;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+function nameCell(d, kind, cls) {
+  const classes = (cls ? cls + ' ' : '') + (canEdit ? 'editable' : '');
+  const attrs = canEdit
+    ? ' tabindex="0" role="button" title="Click to rename"'
+      + ' data-kind="' + kind + '" data-file="' + esc(d.file) + '"'
+    : '';
+  return '<span class="' + classes.trim() + '"' + attrs + '>' + esc(d.name) + '</span>';
+}
+
+function startEdit(span) {
+  if (span.dataset.editing) return;
+  span.dataset.editing = '1';
+
+  const kind = span.dataset.kind;
+  const file = span.dataset.file;
+  const current = span.textContent;
+  const parent = span.parentNode;
+
+  const input = document.createElement('input');
+  input.className = 'name-input';
+  input.value = current;
+  input.maxLength = 60;
+
+  const hint = document.createElement('span');
+  hint.className = 'edit-hint';
+  hint.textContent = 'enter to save, esc to cancel';
+
+  const wrap = document.createElement('span');
+  wrap.appendChild(input);
+  wrap.appendChild(hint);
+
+  let device = null;
+  if (kind === 'shelly') {
+    const label = document.createElement('label');
+    label.className = 'edit-hint';
+    device = document.createElement('input');
+    device.type = 'checkbox';
+    label.appendChild(device);
+    label.appendChild(document.createTextNode(' also write to the plug'));
+    wrap.appendChild(label);
+  }
+
+  parent.replaceChild(wrap, span);
+  input.focus();
+  input.select();
+
+  let done = false;
+
+  const restore = () => {
+    if (done) return;
+    done = true;
+    paused = false;
+    refresh();
+  };
+
+  const save = async () => {
+    if (done) return;
+    const value = input.value.trim();
+    if (!value || value === current) { restore(); return; }
+    done = true;
+    input.disabled = true;
+    hint.textContent = 'saving...';
+    try {
+      const response = await fetch('/api/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: kind, file: file, name: value,
+          on_device: device ? device.checked : false
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const problem = document.createElement('div');
+        problem.className = 'edit-error';
+        problem.textContent = result.error || 'rename failed';
+        wrap.appendChild(problem);
+        hint.textContent = '';
+        setTimeout(() => { paused = false; refresh(); }, 4000);
+        return;
+      }
+    } catch (err) {
+      hint.textContent = 'could not reach the monitor';
+      setTimeout(() => { paused = false; refresh(); }, 4000);
+      return;
+    }
+    paused = false;
+    refresh();
+  };
+
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); save(); }
+    if (event.key === 'Escape') { event.preventDefault(); restore(); }
+  });
+  input.addEventListener('blur', () => setTimeout(save, 120));
+
+  paused = true;
+}
+
+document.addEventListener('click', event => {
+  const span = event.target.closest('.editable');
+  if (span) startEdit(span);
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return;
+  const span = event.target.closest && event.target.closest('.editable');
+  if (span) { event.preventDefault(); startEdit(span); }
+});
+
 function renderAnker(devices) {
   const box = document.getElementById('anker');
   if (!devices.length) {
@@ -534,14 +762,14 @@ function renderAnker(devices) {
   box.innerHTML = devices.map(d => {
     if (!d.live) {
       return '<div class="device"><div class="device-head">'
-        + '<span class="device-name">' + d.name + '</span>'
+        + nameCell(d, 'anker', 'device-name')
         + '<span class="device-meta">' + d.model + '</span></div>'
         + '<p class="empty">No live readings. Live data comes from a running '
         + 'automation.<br>Start one with <b>solixauto service &lt;profile&gt;</b>.</p></div>';
     }
     return '<div class="device">'
       + '<div class="device-head">'
-      + '<span class="device-name">' + d.name + '</span>'
+      + nameCell(d, 'anker', 'device-name')
       + '<span class="device-meta">' + d.model + ' &middot; ' + (d.profile || '') + '</span>'
       + (d.floor_latched ? '<span class="pill unknown">FLOOR LATCHED</span>' : '')
       + '</div>'
@@ -570,7 +798,7 @@ function renderShelly(devices) {
     + devices.map(d => {
         const cls = d.state === true ? 'on' : (d.state === false ? 'off' : 'unknown');
         const text = d.state === true ? 'ON' : (d.state === false ? 'OFF' : 'NO REPLY');
-        return '<tr><td>' + d.name + '</td>'
+        return '<tr><td>' + nameCell(d, 'shelly', '') + '</td>'
           + '<td class="mono">' + (d.host || '--') + ' ch' + d.channel + '</td>'
           + '<td class="mono">' + (d.watts === null || d.watts === undefined ? '--' : Math.round(d.watts) + ' W') + '</td>'
           + '<td><span class="pill ' + cls + '">' + text + '</span></td></tr>';
@@ -666,6 +894,7 @@ function drawChart(history, devices) {
 }
 
 let latest = null;
+let paused = false;
 
 function applyTheme(mode) {
   document.documentElement.setAttribute('data-theme', mode);
@@ -688,10 +917,12 @@ document.getElementById('darkBtn').addEventListener('click', () => applyTheme('d
 let failures = 0;
 
 async function refresh() {
+  if (paused) return;
   try {
     const response = await fetch('/api/data', { cache: 'no-store' });
     const data = await response.json();
     latest = data;
+    canEdit = !!data.can_edit;
     failures = 0;
     document.getElementById('stamp').textContent = data.updated || '--:--:--';
     document.getElementById('dot').className = data.engine ? 'dot' : 'dot stale';
@@ -718,6 +949,7 @@ window.addEventListener('resize', () => refresh());
 
 class Handler(BaseHTTPRequestHandler):
     sampler = None
+    allow_edit = True
 
     def log_message(self, *args):
         pass
@@ -733,22 +965,74 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/data"):
-            self._send(
-                200, json.dumps(Handler.sampler.payload()), "application/json"
-            )
+            payload = Handler.sampler.payload()
+            payload["can_edit"] = Handler.allow_edit
+            self._send(200, json.dumps(payload), "application/json")
             return
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
             return
         self._send(404, "not found", "text/plain")
 
+    def do_POST(self):
+        if self.path != "/api/rename":
+            self._send(404, json.dumps({"error": "not found"}), "application/json")
+            return
 
-def serve(port=8765, interval=5.0, host="127.0.0.1"):
+        if not Handler.allow_edit:
+            self._send(
+                403,
+                json.dumps(
+                    {
+                        "error": "Editing is disabled because this monitor is "
+                        "reachable from other machines. Restart it without "
+                        "--host, or add --allow-remote-edit."
+                    }
+                ),
+                "application/json",
+            )
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 4096:
+                raise ValueError("request too large")
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self._send(400, json.dumps({"error": "bad request"}), "application/json")
+            return
+
+        try:
+            result = Handler.sampler.rename(
+                body.get("kind"),
+                body.get("file"),
+                body.get("name"),
+                bool(body.get("on_device")),
+            )
+        except ValueError as err:
+            self._send(400, json.dumps({"error": str(err)}), "application/json")
+            return
+        except Exception as err:
+            self._send(
+                500,
+                json.dumps({"error": f"{type(err).__name__}: {err}"}),
+                "application/json",
+            )
+            return
+
+        self._send(200, json.dumps(result), "application/json")
+
+
+def serve(port=8765, interval=5.0, host="127.0.0.1", allow_remote_edit=False):
     paths.ensure_dirs()
 
     sampler = Sampler(interval=interval)
     sampler.start()
 
+    local_only = host in ("127.0.0.1", "localhost", "::1")
+
     Handler.sampler = sampler
+    Handler.allow_edit = local_only or allow_remote_edit
+
     server = ThreadingHTTPServer((host, port), Handler)
     return server, sampler
