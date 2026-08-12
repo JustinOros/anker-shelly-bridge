@@ -562,7 +562,28 @@ class AnkerSource:
         self._mqtt = None
         self._reader = None
 
+    def raw_requirements(self, required):
+        from .rules import expression_names
+
+        derived = self.profile.get("derived") or {}
+        readable = set((self.profile.get("readable") or {}).keys())
+
+        resolved = set()
+        for name in required or ():
+            if name in derived:
+                spec = derived[name]
+                expression = spec.get("expression") if isinstance(spec, dict) else spec
+                try:
+                    resolved |= expression_names(expression)
+                except Exception:
+                    pass
+            elif not readable or name in readable:
+                resolved.add(name)
+
+        return {name for name in resolved if name not in derived}
+
     async def start(self, settle=45, required=None):
+        required = self.raw_requirements(required)
         self._api, self._websession, self._mqtt = await open_session(verbose=False)
 
         info = (self._api.devices or {}).get(self.serial)
@@ -571,9 +592,14 @@ class AnkerSource:
 
         self._reader = MqttReader(self._api, self._mqtt, self.serial, info)
         await self._reader.start(realtime=True)
-        status = await self._reader.wait_for_data(settle, required=required)
+        try:
+            status = await self._reader.wait_for_data(settle, required=required)
+        except Exception:
+            await self.stop()
+            raise
 
         if not status:
+            await self.stop()
             raise RuntimeError(
                 f"no telemetry from {self.label} {self.serial} after {settle}s.\n"
                 + OFFLINE_HINT
@@ -581,6 +607,7 @@ class AnkerSource:
 
         missing = set(required or ()) - set(status)
         if missing:
+            await self.stop()
             raise RuntimeError(
                 f"telemetry from {self.serial} is missing field(s) "
                 f"{sorted(missing)} after {settle}s. Check the field names in your "
