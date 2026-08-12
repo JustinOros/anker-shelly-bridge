@@ -631,7 +631,7 @@ PAGE = """<!doctype html>
     opacity: 0.55;
   }
 
-  .battery-mark.floor { background: var(--alert); opacity: 0.9; width: 2px; }
+  .battery-mark.floor { background: var(--ink-soft); opacity: 0.55; width: 1px; }
 
   .battery-words {
     grid-column: 2;
@@ -664,7 +664,7 @@ PAGE = """<!doctype html>
   .battery-words .battery-tag { top: 0; }
   .battery-values .battery-tag { top: 6px; }
 
-  .battery-tag.floor { color: var(--alert); }
+  .battery-tag.floor { color: var(--ink-soft); }
   .battery-tag { cursor: help; }
   .battery-tag:hover { color: var(--ink); }
 
@@ -899,6 +899,10 @@ PAGE = """<!doctype html>
       <span class="theme" role="group" aria-label="Colour scheme">
         <button type="button" id="lightBtn" aria-pressed="false">LIGHT</button>
         <button type="button" id="darkBtn" aria-pressed="false">DARK</button>
+      </span>
+      <span class="theme" role="group" aria-label="Clock format">
+        <button type="button" id="clock12Btn" aria-pressed="false">12H</button>
+        <button type="button" id="clock24Btn" aria-pressed="false">24H</button>
       </span>
     </div>
   </header>
@@ -1279,9 +1283,18 @@ function dayLabel(epoch) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+let use12Hour = false;
+
 function clockLabel(epoch) {
   const d = new Date(epoch * 1000);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  if (!use12Hour) {
+    return String(d.getHours()).padStart(2, '0') + ':' + minutes;
+  }
+  const hours24 = d.getHours();
+  const period = hours24 < 12 ? 'am' : 'pm';
+  const hours12 = hours24 % 12 || 12;
+  return hours12 + ':' + minutes + period;
 }
 
 function eventDetail(e) {
@@ -1400,8 +1413,7 @@ function drawChart(history, devices) {
   ctx.textAlign = 'center';
   [0, 0.5, 1].forEach(f => {
     const tt = t0 + span * f;
-    const d = new Date(tt * 1000);
-    const label = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const label = clockLabel(tt);
     ctx.fillText(label, pad.l + plotW * f, height - 8);
   });
 
@@ -1474,6 +1486,17 @@ function applyTheme(mode) {
   if (latest) drawChart(latest.history, latest.anker);
 }
 
+function applyClockFormat(is12Hour) {
+  use12Hour = is12Hour;
+  document.getElementById('clock12Btn').setAttribute('aria-pressed', is12Hour);
+  document.getElementById('clock24Btn').setAttribute('aria-pressed', !is12Hour);
+  try { localStorage.setItem('solixauto-clock12', is12Hour ? '1' : '0'); } catch (e) {}
+  if (latest) {
+    renderEvents(latest.events, latest.multi);
+    if (!collapsed.history) drawChart(latest.history, latest.anker);
+  }
+}
+
 const stored = (() => {
   try { return localStorage.getItem('solixauto-theme'); } catch (e) { return null; }
 })();
@@ -1481,8 +1504,16 @@ const stored = (() => {
 applyTheme(stored || (window.matchMedia
   && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 
+const storedClock12 = (() => {
+  try { return localStorage.getItem('solixauto-clock12'); } catch (e) { return null; }
+})();
+
+applyClockFormat(storedClock12 === '1');
+
 document.getElementById('lightBtn').addEventListener('click', () => applyTheme('light'));
 document.getElementById('darkBtn').addEventListener('click', () => applyTheme('dark'));
+document.getElementById('clock12Btn').addEventListener('click', () => applyClockFormat(true));
+document.getElementById('clock24Btn').addEventListener('click', () => applyClockFormat(false));
 
 let failures = 0;
 
