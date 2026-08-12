@@ -174,9 +174,27 @@ class Sampler:
         power = meters[channel].get("power") if channel < len(meters) else None
         return state, power
 
+    def _utilized_shelly_files(self):
+        utilized = set()
+        for path in list_profiles(paths.POWER_PROFILE_DIR):
+            try:
+                power_profile = load_yaml(path)
+            except Exception:
+                continue
+            target = (power_profile.get("target") or {}).get("profile")
+            if not target:
+                continue
+            resolved = paths.resolve_profile(target, "shelly")
+            if resolved is not None:
+                utilized.add(resolved.name)
+        return utilized
+
     def _shelly_devices(self):
         devices = []
+        utilized = self._utilized_shelly_files()
         for path in list_profiles(paths.SHELLY_PROFILE_DIR):
+            if path.name not in utilized:
+                continue
             try:
                 profile = load_yaml(path)
             except Exception:
