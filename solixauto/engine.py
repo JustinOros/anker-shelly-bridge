@@ -969,6 +969,9 @@ def _print_rule_table(
     states = engine.states if engine else None
 
     for index, rule in enumerate(profile.active_rules()):
+        acting = False
+        errored = False
+
         if states:
             state = states[index]
             satisfied = state.last_value
@@ -976,36 +979,46 @@ def _print_rule_table(
             ripe = state.ripe(now) if now else False
             if state.error:
                 verdict = f"ERROR {state.error}"
+                errored = True
             elif not satisfied:
-                verdict = "false"
+                verdict = "no"
             elif ripe:
-                verdict = f"TRUE and ripe -> would {rule.action}"
+                verdict = f"YES, ready now -> would {rule.action}"
+                acting = True
             else:
                 remaining = (rule.dwell or 0) - held
-                verdict = f"true, waiting {format_duration(remaining)} of dwell"
+                verdict = (
+                    f"YES, holding {format_duration(remaining)} more before acting"
+                )
+                acting = True
         else:
             try:
                 satisfied = rule.evaluate(variables)
-                verdict = (
-                    f"true -> would {rule.action} after {format_duration(rule.dwell)}"
-                    if satisfied
-                    else "false"
-                )
+                if satisfied:
+                    verdict = (
+                        f"YES -> would {rule.action} after "
+                        f"{format_duration(rule.dwell)}"
+                    )
+                    acting = True
+                else:
+                    verdict = "no"
             except Exception as err:
                 verdict = f"ERROR {type(err).__name__}: {err}"
+                errored = True
 
-        print(f"    [{rule.priority:>3}] {rule.name}")
+        marker = " *" if acting else ("  " if not errored else " !")
+        print(f"   {marker} [{rule.priority:>3}] {rule.name}")
         print(f"          when {rule.when_source}")
         print(f"          {verdict}")
 
         desired = rule.desired_state()
-        if desired is not None:
+        if acting and desired is not None:
             if engine:
                 message = _render_live_notification(engine, rule, variables, desired)
             else:
                 message = _preview_notification(profile, rule, variables, desired)
             if message:
-                print(f"          notify: {message}")
+                print(f"          would notify: {message}")
 
 
 def _render_live_notification(engine, rule, variables, desired):
