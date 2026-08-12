@@ -1114,6 +1114,11 @@ function nameCell(d, kind, cls) {
   return '<span class="' + classes.trim() + '"' + attrs + '>' + esc(d.name) + '</span>';
 }
 
+function serialTag(d) {
+  if (!d.serial) return '';
+  return '<span class="device-meta">(' + esc(d.serial) + ')</span>';
+}
+
 function startEdit(span) {
   if (span.dataset.editing) return;
   span.dataset.editing = '1';
@@ -1226,6 +1231,7 @@ function renderAnker(devices) {
     if (!d.live) {
       return '<div class="device"><div class="device-head">'
         + nameCell(d, 'anker', 'device-name')
+        + serialTag(d)
         + '</div>'
         + '<p class="empty">No live readings. Live data comes from a running '
         + 'automation.<br>Start one with <b>solixauto service &lt;profile&gt;</b>.</p></div>';
@@ -1233,6 +1239,7 @@ function renderAnker(devices) {
     return '<div class="device">'
       + '<div class="device-head">'
       + nameCell(d, 'anker', 'device-name')
+      + serialTag(d)
       + (d.floor_latched ? '<span class="pill unknown">FLOOR LATCHED</span>' : '')
       + '</div>'
       + '<div class="readouts">'
