@@ -341,8 +341,9 @@ def cmd_service(args):
         print("  in the environment it inherits.")
     print()
 
-    if not args.yes and not confirm("Install and start it now?"):
-        print("Not installed.")
+    if not args.yes and not confirm("Install and start it now?", default=True):
+        print("Not installed. Nothing is running.")
+        print(f"Run it in the foreground with: {paths.command('run ' + name)}")
         return
 
     ok, detail = service.install(name)
