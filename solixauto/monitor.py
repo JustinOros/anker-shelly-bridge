@@ -467,31 +467,53 @@ PAGE = """<!doctype html>
   .readout.load .value { color: var(--load); }
 
   .bus {
-    display: flex;
-    height: 16px;
-    border: 1px solid var(--ink);
-    background:
-      repeating-linear-gradient(90deg, transparent 0 5px, var(--etch) 5px 6px);
-    overflow: hidden;
+    display: grid;
+    grid-template-columns: 96px 1fr 62px;
+    gap: 6px 12px;
+    align-items: center;
   }
 
-  .bus i { display: block; height: 100%; transition: width .5s ease; }
-  .bus .in-solar { background: var(--solar); }
-  .bus .in-grid { background: var(--grid); }
-  .bus .out-load { background: var(--load); }
-  .bus .gap { background: transparent; flex: 1 1 auto; }
+  .bus-label {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    text-align: right;
+  }
 
-  .bus-key {
-    display: flex;
-    gap: 18px;
-    margin-top: 7px;
+  .bus-track {
+    height: 13px;
+    background:
+      repeating-linear-gradient(90deg, transparent 0 5px, var(--etch) 5px 6px);
+    border: 1px solid var(--rule);
+  }
+
+  .bus-track i {
+    display: block;
+    height: 100%;
+    transition: width .5s ease;
+    min-width: 0;
+  }
+
+  .bus-track .in-solar { background: var(--solar); }
+  .bus-track .in-grid { background: var(--grid); }
+  .bus-track .out-load { background: var(--load); }
+
+  .bus-value {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  .bus-scale {
+    grid-column: 2 / 4;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 10px;
     color: var(--ink-soft);
-    flex-wrap: wrap;
+    margin-top: 2px;
   }
-
-  .bus-key em { font-style: normal; }
   .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 5px; }
   .sw-solar { background: var(--solar); }
   .sw-grid { background: var(--grid); }
@@ -750,18 +772,21 @@ const fmt = (v, unit) => v === null || v === undefined
   : Math.round(v) + '<span>' + unit + '</span>';
 
 function busBar(pv, ac, out) {
-  const scale = Math.max(pv || 0, ac || 0, out || 0, 100);
+  const peak = Math.max(pv || 0, ac || 0, out || 0);
+  const scale = Math.max(Math.ceil(peak / 100) * 100, 100);
   const w = v => ((v || 0) / scale * 100).toFixed(1) + '%';
+
+  const row = (cls, label, value) =>
+    '<div class="bus-label">' + label + '</div>'
+    + '<div class="bus-track"><i class="' + cls + '" style="width:'
+    + w(value) + '"></i></div>'
+    + '<div class="bus-value">' + Math.round(value || 0) + ' W</div>';
+
   return '<div class="bus">'
-    + '<i class="in-solar" style="width:' + w(pv) + '"></i>'
-    + '<i class="in-grid" style="width:' + w(ac) + '"></i>'
-    + '<i class="gap"></i>'
-    + '<i class="out-load" style="width:' + w(out) + '"></i>'
-    + '</div>'
-    + '<div class="bus-key">'
-    + '<em><i class="swatch sw-solar"></i>input (solar)</em>'
-    + '<em><i class="swatch sw-grid"></i>input (grid)</em>'
-    + '<em><i class="swatch sw-load"></i>output (load)</em>'
+    + row('in-solar', 'solar (in)', pv)
+    + row('in-grid', 'grid (in)', ac)
+    + row('out-load', 'load (out)', out)
+    + '<div class="bus-scale">scale 0 to ' + scale + ' W</div>'
     + '</div>';
 }
 
