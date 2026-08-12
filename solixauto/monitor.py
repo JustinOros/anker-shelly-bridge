@@ -713,6 +713,11 @@ PAGE = """<!doctype html>
     color: var(--panel-raised);
   }
 
+  [data-theme="dark"] .theme button[aria-pressed="true"] {
+    background: var(--solar);
+    color: var(--panel);
+  }
+
   .theme button:focus-visible { outline: 2px solid var(--solar); outline-offset: 1px; }
 
   table { width: 100%; border-collapse: collapse; }
