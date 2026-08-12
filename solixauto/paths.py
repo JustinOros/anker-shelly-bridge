@@ -126,8 +126,13 @@ def resolve_profile(reference, kind):
 
 
 def _slug(value):
+    text = str(value)
+    for suffix in (".yaml", ".yml"):
+        if text.lower().endswith(suffix):
+            text = text[: -len(suffix)]
+            break
     return "".join(
-        char.lower() if char.isalnum() else "-" for char in str(value)
+        char.lower() if char.isalnum() else "-" for char in text
     ).strip("-")
 
 
