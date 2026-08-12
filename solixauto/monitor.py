@@ -927,10 +927,10 @@ PAGE = """<!doctype html>
     <div class="panel-body">
     <div class="chart-head">
       <div class="legend">
-        <span><i class="swatch sw-solar"></i>solar W</span>
-        <span><i class="swatch sw-grid"></i>grid in W</span>
-        <span><i class="swatch sw-load"></i>load W</span>
-        <span><i class="swatch sw-batt"></i>battery %</span>
+        <span><i class="swatch sw-solar"></i>solar</span>
+        <span><i class="swatch sw-grid"></i>grid</span>
+        <span><i class="swatch sw-load"></i>load</span>
+        <span><i class="swatch sw-batt"></i>battery</span>
       </div>
     </div>
     <canvas id="chart"></canvas>
