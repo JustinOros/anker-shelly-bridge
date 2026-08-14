@@ -581,6 +581,16 @@ PAGE = """<!doctype html>
     color: var(--ink-soft);
   }
 
+  .serial-tag {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .serial-tag:hover, .serial-tag:focus-visible {
+    color: var(--ink);
+    outline: none;
+  }
+
   .readouts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
@@ -1240,10 +1250,70 @@ function nameCell(d, kind, cls) {
   return '<span class="' + classes.trim() + '"' + attrs + '>' + esc(d.name) + '</span>';
 }
 
+const serialRevealUntil = new Map();
+
+function maskSerial(serial) {
+  if (serial.length <= 5) return serial;
+  return '*****' + serial.slice(-5);
+}
+
 function serialTag(d) {
   if (!d.serial) return '';
-  return '<span class="device-meta">(' + esc(d.serial) + ')</span>';
+  const revealed = (serialRevealUntil.get(d.serial) || 0) > Date.now();
+  const shown = revealed ? d.serial : maskSerial(d.serial);
+  return '<span class="device-meta serial-tag" tabindex="0" role="button" '
+    + 'title="Click to reveal for 5 seconds" data-serial="' + esc(d.serial) + '" '
+    + 'data-revealed="' + (revealed ? '1' : '0') + '">('
+    + esc(shown) + ')</span>';
 }
+
+function scheduleSerialRemask(serial) {
+  setTimeout(() => {
+    if ((serialRevealUntil.get(serial) || 0) <= Date.now()) {
+      serialRevealUntil.delete(serial);
+      document.querySelectorAll('.serial-tag').forEach(span => {
+        if (span.dataset.serial === serial && !span.matches(':hover')) {
+          span.textContent = '(' + maskSerial(serial) + ')';
+          span.dataset.revealed = '0';
+        }
+      });
+    }
+  }, 5100);
+}
+
+function revealSerialClick(span) {
+  const serial = span.dataset.serial;
+  if (!serial) return;
+  serialRevealUntil.set(serial, Date.now() + 5000);
+  span.textContent = '(' + serial + ')';
+  span.dataset.revealed = '1';
+  scheduleSerialRemask(serial);
+}
+
+document.addEventListener('mouseenter', event => {
+  const span = event.target.closest && event.target.closest('.serial-tag');
+  if (span) span.textContent = '(' + span.dataset.serial + ')';
+}, true);
+
+document.addEventListener('mouseleave', event => {
+  const span = event.target.closest && event.target.closest('.serial-tag');
+  if (span && span.dataset.revealed !== '1') {
+    span.textContent = '(' + maskSerial(span.dataset.serial) + ')';
+  }
+}, true);
+
+document.addEventListener('click', event => {
+  const span = event.target.closest('.serial-tag');
+  if (span) revealSerialClick(span);
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const span = event.target.closest && event.target.closest('.serial-tag');
+  if (!span) return;
+  event.preventDefault();
+  revealSerialClick(span);
+});
 
 function startEdit(span) {
   if (span.dataset.editing) return;
