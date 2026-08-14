@@ -3,20 +3,17 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import paths
 from .profiles import list_profiles, load_yaml, save_yaml, slugify
 
-HISTORY_SIZE = 2880
 POLL_TIMEOUT = 3
 
 
 class Sampler:
-    def __init__(self, interval=5.0, history=HISTORY_SIZE):
+    def __init__(self, interval=5.0):
         self.interval = interval
-        self.history = deque(maxlen=history)
         self.snapshot = {
             "anker": [],
             "shelly": [],
@@ -243,19 +240,7 @@ class Sampler:
         shelly = self._shelly_devices()
         events = self._events()
 
-        point = {"t": time.time()}
-        for device in anker:
-            if not device["live"]:
-                continue
-            serial = device["serial"]
-            point[f"{serial}:soc"] = device["battery_soc"]
-            point[f"{serial}:out"] = device["output_watts"]
-            point[f"{serial}:ac"] = device["ac_in_watts"]
-            point[f"{serial}:pv"] = device["pv_watts"]
-
         with self.lock:
-            if len(point) > 1:
-                self.history.append(point)
             self.snapshot = {
                 "anker": anker,
                 "shelly": shelly,
@@ -268,10 +253,90 @@ class Sampler:
 
     def payload(self):
         with self.lock:
-            return {
-                **self.snapshot,
-                "history": list(self.history),
-            }
+            return dict(self.snapshot)
+
+    def _live_anker_serial(self):
+        for device in self._anker_devices():
+            if device["live"]:
+                return device["serial"], device["name"]
+        return None, None
+
+    def windowed_history(self, window):
+        from . import tune
+
+        window_seconds = {"1d": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(
+            window, 86400
+        )
+
+        serial, name = self._live_anker_serial()
+        if not serial:
+            return {"points": [], "grid": None, "serial": None, "name": None}
+
+        since_epoch = time.time() - window_seconds
+        records = tune.load_telemetry(serial, since_epoch=since_epoch)
+
+        max_points = 600
+        step = max(1, len(records) // max_points)
+
+        points = []
+        for index in range(0, len(records), step):
+            t, values = records[index]
+            point = {"t": t}
+            if "pv_total" in values:
+                point[f"{serial}:pv"] = values["pv_total"]
+            if "ac_input_power" in values:
+                point[f"{serial}:ac"] = values["ac_input_power"]
+            if "output_power_total" in values:
+                point[f"{serial}:out"] = values["output_power_total"]
+            if "battery_soc" in values:
+                point[f"{serial}:soc"] = values["battery_soc"]
+            points.append(point)
+
+        grid = self._grid_usage(records)
+
+        return {"points": points, "grid": grid, "serial": serial, "name": name}
+
+    def _grid_usage(self, records):
+        if len(records) < 2:
+            return None
+
+        MAX_GAP_SECONDS = 300
+
+        on_seconds = 0.0
+        off_seconds = 0.0
+        excluded_seconds = 0.0
+        on_watt_seconds = 0.0
+
+        for index in range(len(records) - 1):
+            t, values = records[index]
+            next_t, _ = records[index + 1]
+            gap = max(0.0, next_t - t)
+
+            if gap > MAX_GAP_SECONDS:
+                excluded_seconds += gap
+                continue
+
+            ac_power = values.get("ac_input_power")
+            on_grid = isinstance(ac_power, (int, float)) and ac_power > 0
+
+            if on_grid:
+                on_seconds += gap
+                on_watt_seconds += ac_power * gap
+            else:
+                off_seconds += gap
+
+        total = on_seconds + off_seconds
+        if total <= 0:
+            return None
+
+        return {
+            "on_seconds": round(on_seconds),
+            "off_seconds": round(off_seconds),
+            "on_fraction": on_seconds / total,
+            "off_fraction": off_seconds / total,
+            "excluded_seconds": round(excluded_seconds),
+            "on_watt_hours": round(on_watt_seconds / 3600, 1),
+        }
 
 
 PAGE = """<!doctype html>
@@ -781,6 +846,61 @@ PAGE = """<!doctype html>
 
   canvas { width: 100%; height: 300px; display: block; }
 
+  .grid-usage {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .grid-usage-label {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 8px;
+  }
+
+  .grid-usage-bar {
+    display: flex;
+    height: 20px;
+    border: 1px solid var(--rule);
+    overflow: hidden;
+  }
+
+  .grid-usage-bar .on { background: var(--grid); }
+  .grid-usage-bar .off { background: var(--charge); }
+
+  .grid-usage-bar i {
+    display: block;
+    height: 100%;
+    transition: width .5s ease;
+    min-width: 0;
+  }
+
+  .grid-usage-key {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+  }
+
+  .grid-usage-key .on-label { color: var(--grid); }
+  .grid-usage-key .off-label { color: var(--charge); }
+
+  .grid-usage-key b {
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .grid-usage-note {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+  }
+
   .event-scroll {
     max-height: 194px;
     overflow-y: auto;
@@ -959,8 +1079,14 @@ PAGE = """<!doctype html>
         <span><i class="swatch sw-load"></i>load</span>
         <span><i class="swatch sw-batt"></i>battery</span>
       </div>
+      <span class="theme" role="group" aria-label="Time window">
+        <button type="button" id="window1d" aria-pressed="true">1 DAY</button>
+        <button type="button" id="window7d" aria-pressed="false">7 DAYS</button>
+        <button type="button" id="window30d" aria-pressed="false">30 DAYS</button>
+      </span>
     </div>
     <canvas id="chart"></canvas>
+    <div class="grid-usage" id="gridUsage"></div>
     </div>
   </section>
 
@@ -1361,7 +1487,7 @@ function renderEvents(events, multi) {
   box.innerHTML = html;
 }
 
-function drawChart(history, devices) {
+function drawChart(history, serial) {
   const canvas = document.getElementById('chart');
   const ratio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
@@ -1372,7 +1498,6 @@ function drawChart(history, devices) {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const live = devices.find(d => d.live);
   const pad = { l: 46, r: 40, t: 12, b: 26 };
   const plotW = width - pad.l - pad.r;
   const plotH = height - pad.t - pad.b;
@@ -1381,12 +1506,12 @@ function drawChart(history, devices) {
   ctx.strokeStyle = css('--rule');
   ctx.fillStyle = css('--ink-soft');
 
-  if (!live || history.length < 2) {
+  if (!serial || history.length < 2) {
     ctx.fillText('Waiting for readings. The chart fills in as samples arrive.', pad.l, height / 2);
     return;
   }
 
-  const sn = live.serial;
+  const sn = serial;
   const series = [
     { key: sn + ':pv', color: css('--solar'), axis: 'w' },
     { key: sn + ':ac', color: css('--grid'), axis: 'w' },
@@ -1449,6 +1574,8 @@ function drawChart(history, devices) {
 
 let latest = null;
 let paused = false;
+let currentHistory = { points: [], grid: null, serial: null, name: null };
+let currentWindow = '1d';
 
 const PANEL_KEY = 'solixauto-collapsed';
 
@@ -1473,8 +1600,8 @@ function togglePanel(key) {
   collapsed[key] = !collapsed[key];
   try { localStorage.setItem(PANEL_KEY, JSON.stringify(collapsed)); } catch (e) {}
   applyPanel(key, collapsed[key]);
-  if (!collapsed[key] && key === 'history' && latest) {
-    drawChart(latest.history, latest.anker);
+  if (!collapsed[key] && key === 'history') {
+    drawChart(currentHistory.points, currentHistory.serial);
   }
 }
 
@@ -1494,7 +1621,8 @@ function applyTheme(mode) {
   document.getElementById('lightBtn').setAttribute('aria-pressed', mode === 'light');
   document.getElementById('darkBtn').setAttribute('aria-pressed', mode === 'dark');
   try { localStorage.setItem('solixauto-theme', mode); } catch (e) {}
-  if (latest) drawChart(latest.history, latest.anker);
+  drawChart(currentHistory.points, currentHistory.serial);
+  renderGridUsage(currentHistory.grid);
 }
 
 function applyClockFormat(is12Hour) {
@@ -1504,8 +1632,8 @@ function applyClockFormat(is12Hour) {
   try { localStorage.setItem('solixauto-clock12', is12Hour ? '1' : '0'); } catch (e) {}
   if (latest) {
     renderEvents(latest.events, latest.multi);
-    if (!collapsed.history) drawChart(latest.history, latest.anker);
   }
+  if (!collapsed.history) drawChart(currentHistory.points, currentHistory.serial);
 }
 
 const stored = (() => {
@@ -1553,9 +1681,6 @@ async function refresh() {
       ? data.shelly.length + ', ' + on + ' on' : 'none');
     setCount('actions', (data.events || []).length
       ? (data.events || []).length + ' logged' : 'none yet');
-    setCount('history', (data.history || []).length + ' samples');
-
-    if (!collapsed.history) drawChart(data.history, data.anker);
   } catch (err) {
     failures++;
     document.getElementById('dot').className = 'dot stale';
@@ -1565,11 +1690,80 @@ async function refresh() {
   }
 }
 
+function renderGridUsage(grid) {
+  const box = document.getElementById('gridUsage');
+  if (!box) return;
+
+  if (!grid) {
+    box.innerHTML = '<p class="empty">Not enough recorded telemetry yet to show '
+      + 'on-grid and off-grid time for this window.</p>';
+    return;
+  }
+
+  const onPct = (grid.on_fraction * 100);
+  const offPct = (grid.off_fraction * 100);
+
+  const hrs = s => (s / 3600).toFixed(1) + 'h';
+  const kwh = wh => (wh / 1000).toFixed(1) + 'kWh';
+
+  let note = '';
+  if (grid.excluded_seconds && grid.excluded_seconds > 60) {
+    note = '<div class="grid-usage-note">' + hrs(grid.excluded_seconds)
+      + ' excluded (gap in recorded telemetry, likely the automation was not '
+      + 'running)</div>';
+  }
+
+  const onDetail = hrs(grid.on_seconds)
+    + (typeof grid.on_watt_hours === 'number' ? ' / ' + kwh(grid.on_watt_hours) : '');
+
+  box.innerHTML = '<div class="grid-usage-label">On-grid vs off-grid</div>'
+    + '<div class="grid-usage-bar">'
+    + '<i class="on" style="width:' + onPct.toFixed(1) + '%" '
+    + 'title="On-grid: ' + onPct.toFixed(1) + '%, ' + onDetail + '"></i>'
+    + '<i class="off" style="width:' + offPct.toFixed(1) + '%" '
+    + 'title="Off-grid: ' + offPct.toFixed(1) + '%, ' + hrs(grid.off_seconds) + '"></i>'
+    + '</div>'
+    + '<div class="grid-usage-key">'
+    + '<span class="on-label">On-grid <b>' + onPct.toFixed(1) + '%</b> (' + onDetail + ')</span>'
+    + '<span class="off-label">Off-grid <b>' + offPct.toFixed(1) + '%</b> (' + hrs(grid.off_seconds) + ')</span>'
+    + '</div>'
+    + note;
+}
+
+async function loadHistory(win) {
+  currentWindow = win;
+  ['1d', '7d', '30d'].forEach(w => {
+    const button = document.getElementById('window' + w);
+    if (button) button.setAttribute('aria-pressed', w === win ? 'true' : 'false');
+  });
+
+  try {
+    const response = await fetch('/api/history?window=' + win, { cache: 'no-store' });
+    const data = await response.json();
+    currentHistory = data;
+  } catch (err) {
+    currentHistory = { points: [], grid: null, serial: null, name: null };
+  }
+
+  setCount('history', currentHistory.points.length + ' samples');
+  if (!collapsed.history) {
+    drawChart(currentHistory.points, currentHistory.serial);
+  }
+  renderGridUsage(currentHistory.grid);
+}
+
+document.getElementById('window1d').addEventListener('click', () => loadHistory('1d'));
+document.getElementById('window7d').addEventListener('click', () => loadHistory('7d'));
+document.getElementById('window30d').addEventListener('click', () => loadHistory('30d'));
+
 refresh();
+loadHistory(currentWindow);
 setInterval(refresh, 5000);
+setInterval(() => loadHistory(currentWindow), 60000);
 window.addEventListener('resize', () => {
   layoutBatteryTags();
   refresh();
+  if (!collapsed.history) drawChart(currentHistory.points, currentHistory.serial);
 });
 </script>
 </body>
@@ -1594,6 +1788,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        if self.path.startswith("/api/history"):
+            from urllib.parse import urlparse, parse_qs
+
+            query = parse_qs(urlparse(self.path).query)
+            window = (query.get("window") or ["1d"])[0]
+            if window not in ("1d", "7d", "30d"):
+                window = "1d"
+            result = Handler.sampler.windowed_history(window)
+            self._send(200, json.dumps(result), "application/json")
+            return
         if self.path.startswith("/api/data"):
             payload = Handler.sampler.payload()
             payload["can_edit"] = Handler.allow_edit
