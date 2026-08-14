@@ -14,9 +14,13 @@ TOP_UP_PERCENTILE = 15
 STOP_PERCENTILE = 85
 SURPLUS_RELEASE_PERCENTILE = 60
 SURPLUS_FALLBACK_PERCENTILE = 20
+MIN_CHARGING_SURPLUS = 150
 
 FLOOR_MARGIN = 10
 MIN_BAND_WIDTH = 15
+
+PLATEAU_FRACTION = 0.15
+PLATEAU_BAND = 2
 
 
 class TuneError(Exception):
@@ -77,6 +81,42 @@ def percentile(values, pct):
 
 def round_to(value, step):
     return round(value / step) * step
+
+
+def detect_ceiling_plateau(values, band=PLATEAU_BAND, min_fraction=PLATEAU_FRACTION):
+    if not values:
+        return None, values
+
+    ceiling = max(values)
+    at_ceiling = [v for v in values if v >= ceiling - band]
+    fraction = len(at_ceiling) / len(values)
+
+    if fraction < min_fraction:
+        return None, values
+
+    below = [v for v in values if v < ceiling - band]
+    if len(below) < MIN_SAMPLES_REQUIRED // 4:
+        return None, values
+
+    return {"ceiling": ceiling, "fraction": fraction}, below
+
+
+def detect_floor_plateau(values, band=PLATEAU_BAND, min_fraction=PLATEAU_FRACTION):
+    if not values:
+        return None, values
+
+    floor_value = min(values)
+    at_floor = [v for v in values if v <= floor_value + band]
+    fraction = len(at_floor) / len(values)
+
+    if fraction < min_fraction:
+        return None, values
+
+    above = [v for v in values if v > floor_value + band]
+    if len(above) < MIN_SAMPLES_REQUIRED // 4:
+        return None, values
+
+    return {"floor": floor_value, "fraction": fraction}, above
 
 
 def describe_span(seconds):
@@ -168,8 +208,11 @@ class Analysis:
 
         low_bound = max(floor_release, floor_at + FLOOR_MARGIN)
 
-        top_up = percentile(self.battery, TOP_UP_PERCENTILE)
-        stop_at = percentile(self.battery, STOP_PERCENTILE)
+        ceiling_info, battery_for_high = detect_ceiling_plateau(self.battery)
+        floor_info, battery_for_low = detect_floor_plateau(self.battery)
+
+        top_up = percentile(battery_for_low, TOP_UP_PERCENTILE)
+        stop_at = percentile(battery_for_high, STOP_PERCENTILE)
 
         top_up = round_to(top_up, 5)
         stop_at = round_to(stop_at, 5)
@@ -181,8 +224,8 @@ class Analysis:
         if stop_at <= top_up:
             top_up = max(low_bound, stop_at - MIN_BAND_WIDTH)
 
-        battery_low = percentile(self.battery, 10)
-        battery_high = percentile(self.battery, 90)
+        battery_low = percentile(battery_for_low, 10)
+        battery_high = percentile(battery_for_high, 90)
 
         proposal = {
             "top_up_at": top_up,
@@ -192,6 +235,8 @@ class Analysis:
             "sample_count": len(self.records),
             "span_hours": round(self.span_hours, 1),
             "solar": None,
+            "ceiling_plateau": ceiling_info,
+            "floor_plateau": floor_info,
         }
 
         positive_surplus = [v for v in self.daylight_surplus() if v > 0]
@@ -201,6 +246,10 @@ class Analysis:
 
             release_surplus = round_to(release_surplus, 25)
             fallback_surplus = round_to(fallback_surplus, 25)
+
+            floor_applied = release_surplus < MIN_CHARGING_SURPLUS
+            if floor_applied:
+                release_surplus = MIN_CHARGING_SURPLUS
 
             if fallback_surplus >= release_surplus:
                 fallback_surplus = max(0, release_surplus - 50)
@@ -213,6 +262,7 @@ class Analysis:
                 else top_up,
                 "fallback_battery": top_up,
                 "sample_count": len(positive_surplus),
+                "floor_applied": floor_applied,
             }
 
         return proposal
@@ -227,6 +277,24 @@ class Analysis:
             f"Battery ranged roughly {proposal['observed_low']:g}% to "
             f"{proposal['observed_high']:g}% during that time."
         )
+
+        if proposal.get("ceiling_plateau"):
+            plateau = proposal["ceiling_plateau"]
+            lines.append(
+                f"  {plateau['fraction']*100:.0f}% of samples sat at or near "
+                f"{plateau['ceiling']:g}% (battery topped out and held there). "
+                f"That plateau was excluded when figuring out the charging "
+                f"thresholds below, so they reflect real charging behavior "
+                f"rather than time spent sitting full."
+            )
+        if proposal.get("floor_plateau"):
+            plateau = proposal["floor_plateau"]
+            lines.append(
+                f"  {plateau['fraction']*100:.0f}% of samples sat at or near "
+                f"{plateau['floor']:g}% (battery bottomed out and held there). "
+                f"That plateau was excluded the same way."
+            )
+
         lines.append("")
         lines.append(
             f"top up from grid when low: battery <= {proposal['top_up_at']:g}%"
@@ -251,11 +319,19 @@ class Analysis:
                 f"surplus > {solar['release_surplus']:g}W and "
                 f"battery > {solar['release_battery']:g}%"
             )
-            lines.append(
-                f"  based on {solar['sample_count']} daylight sample(s); solar "
-                f"surplus exceeded this level in the upper "
-                f"{100 - SURPLUS_RELEASE_PERCENTILE}% of observed daylight readings"
-            )
+            if solar.get("floor_applied"):
+                lines.append(
+                    f"  raised to {MIN_CHARGING_SURPLUS:g}W, the minimum surplus "
+                    f"observed to actually charge the battery on this system. "
+                    f"The raw statistical threshold from "
+                    f"{solar['sample_count']} daylight sample(s) was lower."
+                )
+            else:
+                lines.append(
+                    f"  based on {solar['sample_count']} daylight sample(s); solar "
+                    f"surplus exceeded this level in the upper "
+                    f"{100 - SURPLUS_RELEASE_PERCENTILE}% of observed daylight readings"
+                )
             lines.append(
                 f"solar cannot keep up, fall back to the grid: "
                 f"surplus < {solar['fallback_surplus']:g}W and "
