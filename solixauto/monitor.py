@@ -408,9 +408,8 @@ PAGE = """<!doctype html>
     align-items: baseline;
     justify-content: space-between;
     gap: 16px;
-    padding-bottom: 14px;
-    border-bottom: 2px solid var(--ink);
-    margin-bottom: 26px;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
     flex-wrap: wrap;
   }
 
