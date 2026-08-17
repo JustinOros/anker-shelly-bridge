@@ -166,6 +166,12 @@ def stamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def clock_stamp():
+    now = datetime.now()
+    hour12 = now.hour % 12 or 12
+    return f"{hour12}:{now.minute:02d} {now.strftime('%p')}"
+
+
 class Reporter:
     def __init__(self, log_path=None, quiet=False):
         self.quiet = quiet
@@ -355,6 +361,7 @@ class Engine:
                 "target_host": self.target.host,
                 "target_channel": self.target.channel,
                 "time": stamp(),
+                "clock": clock_stamp(),
             }
         )
         return context

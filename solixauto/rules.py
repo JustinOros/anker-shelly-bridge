@@ -43,7 +43,7 @@ ACTIONS = {"target.on", "target.off", "none"}
 DURATION_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smh]?)\s*$", re.IGNORECASE)
 
 DEFAULT_NOTIFY_TEMPLATE = (
-    "{source_name} battery {battery_soc}%, solar {pv_total}W. "
+    "{clock} {source_name} battery {battery_soc}%, solar {pv_total}W. "
     "{target_name} turned {action}."
 )
 DEFAULT_NOTIFY_THROTTLE = 300
@@ -197,14 +197,14 @@ class NotificationSettings:
         self.stale_template = str(
             raw.get("stale_template")
             or (
-                "{source_name}: telemetry lost ({reason}). Last seen battery "
-                "{battery_soc}% at {last_seen}. {target_name} was turned {action} "
-                "as a precaution."
+                "{clock} {source_name}: telemetry lost ({reason}). Last seen "
+                "battery {battery_soc}% at {last_seen}. {target_name} was "
+                "turned {action} as a precaution."
             )
         )
         self.recovered_template = str(
             raw.get("recovered_template")
-            or "{source_name}: telemetry is back after {outage}. Rules resumed."
+            or "{clock} {source_name}: telemetry is back after {outage}. Rules resumed."
         )
         self.title = str(raw.get("title") or "{profile}")
         self.throttle = parse_duration(
@@ -537,7 +537,7 @@ def validate(profile):
         context_names = {
             "profile", "rule", "action", "action_word", "source_name", "source_model",
             "source_serial", "target_name", "target_model", "target_host",
-            "target_channel", "condition", "time", "reason", "event",
+            "target_channel", "condition", "time", "clock", "reason", "event",
         }
         for template in templates_to_check:
             for field in notify_module.template_fields(template):
