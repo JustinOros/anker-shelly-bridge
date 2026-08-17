@@ -795,6 +795,37 @@ PAGE = """<!doctype html>
 
   .theme button:focus-visible { outline: 2px solid var(--solar); outline-offset: 1px; }
 
+  .fit-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-left: 14px;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    border: 1px solid var(--rule);
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    vertical-align: middle;
+  }
+
+  .fit-btn:hover { color: var(--ink); }
+
+  .fit-btn[aria-pressed="true"] {
+    background: var(--ink);
+    color: var(--panel-raised);
+  }
+
+  [data-theme="dark"] .fit-btn[aria-pressed="true"] {
+    background: var(--solar);
+    color: var(--panel);
+  }
+
+  .fit-btn:focus-visible { outline: 2px solid var(--solar); outline-offset: 1px; }
+
   table { width: 100%; border-collapse: collapse; }
 
   th {
@@ -1039,6 +1070,8 @@ PAGE = """<!doctype html>
         <button type="button" id="clock12Btn" aria-pressed="false">12H</button>
         <button type="button" id="clock24Btn" aria-pressed="false">24H</button>
       </span>
+      <button type="button" id="fitBtn" class="fit-btn" aria-pressed="false"
+        title="Fit the whole page to your window, no scrolling">⛶</button>
     </div>
   </header>
 
@@ -1727,6 +1760,7 @@ function togglePanel(key) {
   if (!collapsed[key] && key === 'history') {
     drawChart(currentHistory.points, currentHistory.serial);
   }
+  refitIfEnabled();
 }
 
 function setCount(key, text) {
@@ -1749,6 +1783,34 @@ function applyTheme(mode) {
   renderGridUsage(currentHistory.grid);
 }
 
+let fitToScreen = false;
+
+function computeFitScale() {
+  const previousZoom = document.documentElement.style.zoom;
+  document.documentElement.style.zoom = '';
+  const naturalHeight = document.documentElement.scrollHeight;
+  document.documentElement.style.zoom = previousZoom;
+  if (!naturalHeight) return 1;
+  return Math.min(1, window.innerHeight / naturalHeight);
+}
+
+function refitIfEnabled() {
+  if (!fitToScreen) return;
+  document.documentElement.style.zoom = computeFitScale();
+}
+
+function applyFitToScreen(enabled) {
+  fitToScreen = enabled;
+  const btn = document.getElementById('fitBtn');
+  if (btn) btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  try { localStorage.setItem('solixauto-fit', enabled ? '1' : '0'); } catch (e) {}
+  if (enabled) {
+    refitIfEnabled();
+  } else {
+    document.documentElement.style.zoom = '';
+  }
+}
+
 function applyClockFormat(is12Hour) {
   use12Hour = is12Hour;
   document.getElementById('clock12Btn').setAttribute('aria-pressed', is12Hour);
@@ -1758,6 +1820,7 @@ function applyClockFormat(is12Hour) {
     renderEvents(latest.events, latest.multi);
   }
   if (!collapsed.history) drawChart(currentHistory.points, currentHistory.serial);
+  refitIfEnabled();
 }
 
 const stored = (() => {
@@ -1773,10 +1836,17 @@ const storedClock12 = (() => {
 
 applyClockFormat(storedClock12 === '1');
 
+const storedFit = (() => {
+  try { return localStorage.getItem('solixauto-fit'); } catch (e) { return null; }
+})();
+
+applyFitToScreen(storedFit === '1');
+
 document.getElementById('lightBtn').addEventListener('click', () => applyTheme('light'));
 document.getElementById('darkBtn').addEventListener('click', () => applyTheme('dark'));
 document.getElementById('clock12Btn').addEventListener('click', () => applyClockFormat(true));
 document.getElementById('clock24Btn').addEventListener('click', () => applyClockFormat(false));
+document.getElementById('fitBtn').addEventListener('click', () => applyFitToScreen(!fitToScreen));
 
 let failures = 0;
 
@@ -1805,6 +1875,7 @@ async function refresh() {
       ? data.shelly.length + ', ' + on + ' on' : 'none');
     setCount('actions', (data.events || []).length
       ? (data.events || []).length + ' logged' : 'none yet');
+    refitIfEnabled();
   } catch (err) {
     failures++;
     document.getElementById('dot').className = 'dot stale';
@@ -1874,6 +1945,7 @@ async function loadHistory(win) {
     drawChart(currentHistory.points, currentHistory.serial);
   }
   renderGridUsage(currentHistory.grid);
+  refitIfEnabled();
 }
 
 document.getElementById('window1d').addEventListener('click', () => loadHistory('1d'));
