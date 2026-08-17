@@ -1557,6 +1557,8 @@ function renderEvents(events, multi) {
   box.innerHTML = html;
 }
 
+let chartGeom = null;
+
 function drawChart(history, serial) {
   const canvas = document.getElementById('chart');
   const ratio = window.devicePixelRatio || 1;
@@ -1577,6 +1579,7 @@ function drawChart(history, serial) {
   ctx.fillStyle = css('--ink-soft');
 
   if (!serial || history.length < 2) {
+    chartGeom = null;
     ctx.fillText('Waiting for readings. The chart fills in as samples arrive.', pad.l, height / 2);
     return;
   }
@@ -1602,6 +1605,8 @@ function drawChart(history, serial) {
   const x = t => pad.l + (t - t0) / span * plotW;
   const yW = v => pad.t + plotH - (v / maxW) * plotH;
   const yP = v => pad.t + plotH - (v / 100) * plotH;
+
+  chartGeom = { pad, plotW, plotH, t0, span, width, height };
 
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -1640,6 +1645,55 @@ function drawChart(history, serial) {
     ctx.stroke();
   });
   ctx.setLineDash([]);
+}
+
+function drawChartCrosshair(clientX) {
+  const canvas = document.getElementById('chart');
+  if (!canvas || !chartGeom) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const cssX = clientX - rect.left;
+  const { pad, plotW, plotH, t0, span, height } = chartGeom;
+
+  if (cssX < pad.l || cssX > pad.l + plotW) {
+    drawChart(currentHistory.points, currentHistory.serial);
+    return;
+  }
+
+  drawChart(currentHistory.points, currentHistory.serial);
+  const ctx = canvas.getContext('2d');
+
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = css('--ink');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cssX, pad.t);
+  ctx.lineTo(cssX, pad.t + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const t = t0 + (cssX - pad.l) / plotW * span;
+  const label = clockLabel(t);
+
+  ctx.font = '10px ui-monospace, Menlo, monospace';
+  const textWidth = ctx.measureText(label).width;
+  const boxPad = 4;
+  const boxY = height - 8;
+
+  ctx.fillStyle = css('--panel-raised');
+  ctx.fillRect(cssX - textWidth / 2 - boxPad, boxY - 10, textWidth + boxPad * 2, 16);
+  ctx.strokeStyle = css('--solar');
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cssX - textWidth / 2 - boxPad, boxY - 10, textWidth + boxPad * 2, 16);
+
+  ctx.fillStyle = css('--solar');
+  ctx.textAlign = 'center';
+  ctx.fillText(label, cssX, boxY + 2);
+}
+
+function clearChartCrosshair() {
+  if (!chartGeom) return;
+  drawChart(currentHistory.points, currentHistory.serial);
 }
 
 let latest = null;
@@ -1835,6 +1889,17 @@ window.addEventListener('resize', () => {
   refresh();
   if (!collapsed.history) drawChart(currentHistory.points, currentHistory.serial);
 });
+
+const chartCanvas = document.getElementById('chart');
+if (chartCanvas) {
+  chartCanvas.addEventListener('mousemove', event => {
+    drawChartCrosshair(event.clientX);
+  });
+  chartCanvas.addEventListener('mouseleave', () => {
+    clearChartCrosshair();
+  });
+}
+
 </script>
 </body>
 </html>
