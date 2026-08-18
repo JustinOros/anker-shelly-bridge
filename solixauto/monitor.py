@@ -264,16 +264,21 @@ class Sampler:
     def windowed_history(self, window):
         from . import tune
 
-        window_seconds = {"1d": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(
-            window, 86400
-        )
+        now = time.time()
+        window_bounds = {
+            "today": (now - 86400, now),
+            "yesterday": (now - 2 * 86400, now - 86400 - 0.001),
+            "week": (now - 7 * 86400, now),
+            "month": (now - 30 * 86400, now),
+        }
+        since_epoch, until_epoch = window_bounds.get(window, window_bounds["today"])
 
         serial, name = self._live_anker_serial()
         if not serial:
             return {"points": [], "grid": None, "serial": None, "name": None}
 
-        since_epoch = time.time() - window_seconds
         records = tune.load_telemetry(serial, since_epoch=since_epoch)
+        records = [r for r in records if r[0] <= until_epoch]
 
         max_points = 600
         step = max(1, len(records) // max_points)
@@ -1122,9 +1127,10 @@ PAGE = """<!doctype html>
         <span><i class="swatch sw-batt"></i>battery</span>
       </div>
       <span class="theme" role="group" aria-label="Time window">
-        <button type="button" id="window1d" aria-pressed="true">1 DAY</button>
-        <button type="button" id="window7d" aria-pressed="false">7 DAYS</button>
-        <button type="button" id="window30d" aria-pressed="false">30 DAYS</button>
+        <button type="button" id="windowtoday" aria-pressed="true">TODAY</button>
+        <button type="button" id="windowyesterday" aria-pressed="false">YESTERDAY</button>
+        <button type="button" id="windowweek" aria-pressed="false">WEEK</button>
+        <button type="button" id="windowmonth" aria-pressed="false">MONTH</button>
       </span>
     </div>
     <canvas id="chart"></canvas>
@@ -1731,7 +1737,7 @@ function clearChartCrosshair() {
 let latest = null;
 let paused = false;
 let currentHistory = { points: [], grid: null, serial: null, name: null };
-let currentWindow = '1d';
+let currentWindow = 'today';
 
 const PANEL_KEY = 'solixauto-collapsed';
 
@@ -1926,7 +1932,7 @@ function renderGridUsage(grid) {
 
 async function loadHistory(win) {
   currentWindow = win;
-  ['1d', '7d', '30d'].forEach(w => {
+  ['today', 'yesterday', 'week', 'month'].forEach(w => {
     const button = document.getElementById('window' + w);
     if (button) button.setAttribute('aria-pressed', w === win ? 'true' : 'false');
   });
@@ -1947,9 +1953,10 @@ async function loadHistory(win) {
   refitIfEnabled();
 }
 
-document.getElementById('window1d').addEventListener('click', () => loadHistory('1d'));
-document.getElementById('window7d').addEventListener('click', () => loadHistory('7d'));
-document.getElementById('window30d').addEventListener('click', () => loadHistory('30d'));
+document.getElementById('windowtoday').addEventListener('click', () => loadHistory('today'));
+document.getElementById('windowyesterday').addEventListener('click', () => loadHistory('yesterday'));
+document.getElementById('windowweek').addEventListener('click', () => loadHistory('week'));
+document.getElementById('windowmonth').addEventListener('click', () => loadHistory('month'));
 
 refresh();
 loadHistory(currentWindow);
@@ -1998,9 +2005,9 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import urlparse, parse_qs
 
             query = parse_qs(urlparse(self.path).query)
-            window = (query.get("window") or ["1d"])[0]
-            if window not in ("1d", "7d", "30d"):
-                window = "1d"
+            window = (query.get("window") or ["today"])[0]
+            if window not in ("today", "yesterday", "week", "month"):
+                window = "today"
             result = Handler.sampler.windowed_history(window)
             self._send(200, json.dumps(result), "application/json")
             return
