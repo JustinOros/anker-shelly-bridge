@@ -265,9 +265,23 @@ class Sampler:
         from . import tune
 
         now = time.time()
+        local_now = time.localtime(now)
+        midnight_struct = (
+            local_now.tm_year,
+            local_now.tm_mon,
+            local_now.tm_mday,
+            0,
+            0,
+            0,
+            0,
+            0,
+            -1,
+        )
+        today_start = time.mktime(midnight_struct)
+
         window_bounds = {
-            "today": (now - 86400, now),
-            "yesterday": (now - 2 * 86400, now - 86400 - 0.001),
+            "today": (today_start, now),
+            "yesterday": (today_start - 86400, today_start - 0.001),
             "week": (now - 7 * 86400, now),
             "month": (now - 30 * 86400, now),
         }
@@ -1528,6 +1542,11 @@ function dayLabel(epoch) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function shortDateLabel(epoch) {
+  const d = new Date(epoch * 1000);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 let use12Hour = false;
 
 function clockLabel(epoch) {
@@ -1660,9 +1679,12 @@ function drawChart(history, serial) {
   }
 
   ctx.textAlign = 'center';
+  const spansMultipleDaysAxis = currentWindow === 'week' || currentWindow === 'month';
   [0, 0.5, 1].forEach(f => {
     const tt = t0 + span * f;
-    const label = clockLabel(tt);
+    const label = spansMultipleDaysAxis
+      ? shortDateLabel(tt) + ' ' + clockLabel(tt)
+      : clockLabel(tt);
     ctx.fillText(label, pad.l + plotW * f, height - 8);
   });
 
@@ -1711,7 +1733,10 @@ function drawChartCrosshair(clientX) {
   ctx.setLineDash([]);
 
   const t = t0 + (cssX - pad.l) / plotW * span;
-  const label = clockLabel(t);
+  const spansMultipleDays = currentWindow === 'week' || currentWindow === 'month';
+  const label = spansMultipleDays
+    ? shortDateLabel(t) + ' ' + clockLabel(t)
+    : clockLabel(t);
 
   ctx.font = '10px ui-monospace, Menlo, monospace';
   const textWidth = ctx.measureText(label).width;
