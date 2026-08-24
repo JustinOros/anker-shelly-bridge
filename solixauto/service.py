@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from . import paths
 
@@ -73,13 +74,20 @@ def environment():
 
 
 def launchd_plist(profile_name):
-    label = service_label(profile_name)
+    label = xml_escape(service_label(profile_name))
+    python = xml_escape(preferred_python())
     script = script_path()
+    script_escaped = xml_escape(script)
+    working_dir = xml_escape(str(Path(script).parent))
+    profile_arg = xml_escape(profile_name)
     log_dir = paths.LOG_DIR
 
     env_entries = ""
     for key, value in environment().items():
-        env_entries += f"        <key>{key}</key>\n        <string>{value}</string>\n"
+        env_entries += (
+            f"        <key>{xml_escape(key)}</key>\n"
+            f"        <string>{xml_escape(value)}</string>\n"
+        )
 
     env_block = ""
     if env_entries:
@@ -89,6 +97,9 @@ def launchd_plist(profile_name):
             f"{env_entries}"
             "    </dict>\n"
         )
+
+    out_path = xml_escape(str(log_dir / f"{profile_name}.out.log"))
+    err_path = xml_escape(str(log_dir / f"{profile_name}.err.log"))
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -100,15 +111,15 @@ def launchd_plist(profile_name):
 
     <key>ProgramArguments</key>
     <array>
-      <string>{preferred_python()}</string>
-      <string>{script}</string>
+      <string>{python}</string>
+      <string>{script_escaped}</string>
       <string>run</string>
-      <string>{profile_name}</string>
+      <string>{profile_arg}</string>
       <string>--quiet</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>{Path(script).parent}</string>
+    <string>{working_dir}</string>
 
 {env_block}    <key>RunAtLoad</key>
     <true/>
@@ -120,19 +131,29 @@ def launchd_plist(profile_name):
     <integer>60</integer>
 
     <key>StandardOutPath</key>
-    <string>{log_dir / f"{profile_name}.out.log"}</string>
+    <string>{out_path}</string>
 
     <key>StandardErrorPath</key>
-    <string>{log_dir / f"{profile_name}.err.log"}</string>
+    <string>{err_path}</string>
   </dict>
 </plist>
 """
 
 
+def _systemd_quote(value):
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def systemd_unit(profile_name):
     script = script_path()
+    exec_start = " ".join(
+        _systemd_quote(token)
+        for token in (preferred_python(), script, "run", profile_name, "--quiet")
+    )
     env_lines = "".join(
-        f"Environment={key}={value}\n" for key, value in environment().items()
+        f"Environment={_systemd_quote(f'{key}={value}')}\n"
+        for key, value in environment().items()
     )
 
     return f"""[Unit]
@@ -141,7 +162,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart={preferred_python()} {script} run {profile_name} --quiet
+ExecStart={exec_start}
 WorkingDirectory={Path(script).parent}
 {env_lines}Restart=always
 RestartSec=60
@@ -158,7 +179,7 @@ def windows_instructions(profile_name):
 others. Use Task Scheduler:
 
   schtasks /create /tn "{label}" /sc onlogon /rl highest ^
-    /tr "\\"{preferred_python()}\\" \\"{script}\\" run {profile_name} --quiet"
+    /tr "\\"{preferred_python()}\\" \\"{script}\\" run \\"{profile_name}\\" --quiet"
 
 To remove it:
 
