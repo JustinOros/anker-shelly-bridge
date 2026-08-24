@@ -543,6 +543,13 @@ class Engine:
         self.stale_action_state = None
         self.pre_stale_state = None
 
+        if self.floor_latched:
+            self.report(
+                "battery floor is still active, not restoring pre-outage state",
+                force=True,
+            )
+            return
+
         if previous is None or previous == applied:
             return
 
@@ -886,16 +893,27 @@ class Engine:
             if self.profile.on_stale == "stop":
                 raise RuntimeError("stopping: MQTT session disconnected")
             if self.profile.on_stale == "safe_state":
-                if self.stale_action_state is None:
-                    self.pre_stale_state = self.last_commanded
-                    self.stale_action_state = self.profile.safe_state
-                await self.apply(
-                    session,
-                    self.profile.safe_state,
-                    "connection to Anker lost",
-                    now,
-                    cause="stale",
-                )
+                if self.floor_latched:
+                    floor_state = self.profile.battery_floor.desired_state()
+                    await self.apply(
+                        session,
+                        floor_state,
+                        "battery floor holding through a lost connection",
+                        now,
+                        force=True,
+                        cause="floor",
+                    )
+                else:
+                    if self.stale_action_state is None:
+                        self.pre_stale_state = self.last_commanded
+                        self.stale_action_state = self.profile.safe_state
+                    await self.apply(
+                        session,
+                        self.profile.safe_state,
+                        "connection to Anker lost",
+                        now,
+                        cause="stale",
+                    )
 
             if not self.stale_notified:
                 self.stale_notified = True
@@ -956,16 +974,27 @@ class Engine:
             if self.profile.on_stale == "stop":
                 raise RuntimeError("stopping: telemetry went stale")
             if self.profile.on_stale == "safe_state":
-                if self.stale_action_state is None:
-                    self.pre_stale_state = self.last_commanded
-                    self.stale_action_state = self.profile.safe_state
-                await self.apply(
-                    session,
-                    self.profile.safe_state,
-                    "telemetry went stale",
-                    now,
-                    cause="stale",
-                )
+                if self.floor_latched:
+                    floor_state = self.profile.battery_floor.desired_state()
+                    await self.apply(
+                        session,
+                        floor_state,
+                        "battery floor holding through stale telemetry",
+                        now,
+                        force=True,
+                        cause="floor",
+                    )
+                else:
+                    if self.stale_action_state is None:
+                        self.pre_stale_state = self.last_commanded
+                        self.stale_action_state = self.profile.safe_state
+                    await self.apply(
+                        session,
+                        self.profile.safe_state,
+                        "telemetry went stale",
+                        now,
+                        cause="stale",
+                    )
             return
 
         if self.stale_reported:
