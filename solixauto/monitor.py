@@ -1040,6 +1040,8 @@ PAGE = """<!doctype html>
 
   .event-cause.floor { color: var(--alert); border-color: currentColor; }
   .event-cause.stale { color: var(--solar); border-color: currentColor; }
+  .event-cause.switch_failed { color: var(--alert); border-color: currentColor; }
+  .event-cause.unverified { color: var(--alert); border-color: currentColor; }
 
   .event-detail {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1529,7 +1531,9 @@ const CAUSE_LABEL = {
   floor: 'safety floor',
   stale: 'telemetry lost',
   recovered: 'recovered',
-  manual: 'manual'
+  manual: 'manual',
+  switch_failed: 'switch did not take effect',
+  unverified: 'switch unverified'
 };
 
 function dayLabel(epoch) {

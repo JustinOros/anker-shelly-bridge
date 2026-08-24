@@ -319,6 +319,49 @@ class Engine:
             self.report(f"FAILED to turn {self._word(desired)}: {type(err).__name__}: {err}")
             return False
 
+        await asyncio.sleep(1.0)
+        try:
+            confirmed = await self.target.get_state(session)
+        except Exception:
+            confirmed = None
+
+        if confirmed is None:
+            self.report(
+                f"sent {self._word(desired)} but could not read back the plug's "
+                "actual state to confirm it took effect"
+            )
+            await self.notify_switch_problem(
+                "unconfirmed", desired, None, rule, variables, reason
+            )
+            self.record_event(
+                None,
+                f"{reason} (sent {self._word(desired)}, could not verify)",
+                rule,
+                variables,
+                cause="unverified",
+            )
+            return False
+
+        if confirmed != desired:
+            self.report(
+                f"WARNING: commanded {self._word(desired)} ({reason}) but the "
+                f"plug reports {self._word(confirmed)}. Not treating this as "
+                "applied; will retry."
+            )
+            self.last_commanded = confirmed
+            await self.notify_switch_problem(
+                "failed", desired, confirmed, rule, variables, reason
+            )
+            self.record_event(
+                confirmed,
+                f"{reason} (commanded {self._word(desired)}, plug stayed "
+                f"{self._word(confirmed)})",
+                rule,
+                variables,
+                cause="switch_failed",
+            )
+            return False
+
         self.last_commanded = desired
         self.last_action_at = now
         self.recent_actions.append(now)
@@ -327,6 +370,32 @@ class Engine:
         self.record_event(desired, reason, rule, variables, cause=cause)
         await self.notify(desired, rule, variables, event="action")
         return True
+
+    async def notify_switch_problem(
+        self, kind, desired, confirmed, rule, variables, reason
+    ):
+        if not self.notifier.available():
+            self.report(
+                f"switch {kind} but no notification channel is enabled", force=True
+            )
+            return
+
+        settings = self.profile.notifications
+        context = self.context(confirmed, rule, variables, "switch_" + kind)
+        context["reason"] = reason
+        context["attempted"] = self._word(desired)
+        context["actual"] = self._word(confirmed) if confirmed is not None else "unknown"
+
+        template = (
+            settings.switch_unconfirmed_template
+            if kind == "unconfirmed"
+            else settings.switch_failed_template
+        )
+
+        body = render(template, context)
+        title = render(settings.title or "{profile}", context)
+
+        await self.notifier.send(title, body, priority="urgent", key="switch_" + kind)
 
     @staticmethod
     def _word(desired):
@@ -1215,6 +1284,7 @@ def _preview_notification(profile, rule, variables, desired):
             "target_host": target_profile.get("access", {}).get("host", ""),
             "target_channel": profile.target_channel or 0,
             "time": stamp(),
+            "clock": clock_stamp(),
             "event": "action",
         }
     )

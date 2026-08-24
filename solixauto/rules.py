@@ -206,6 +206,20 @@ class NotificationSettings:
             raw.get("recovered_template")
             or "{clock} {source_name}: telemetry is back after {outage}. Rules resumed."
         )
+        self.switch_failed_template = str(
+            raw.get("switch_failed_template")
+            or (
+                "{clock} {source_name}: commanded {target_name} {attempted}, but "
+                "it still reports {actual}. Will keep retrying. ({reason})"
+            )
+        )
+        self.switch_unconfirmed_template = str(
+            raw.get("switch_unconfirmed_template")
+            or (
+                "{clock} {source_name}: sent {target_name} {attempted}, but could "
+                "not read back its state to confirm. ({reason})"
+            )
+        )
         self.title = str(raw.get("title") or "{profile}")
         self.throttle = parse_duration(
             raw.get("throttle", DEFAULT_NOTIFY_THROTTLE), "notifications.throttle"
@@ -529,7 +543,14 @@ def validate(profile):
                 f"{sorted(configured)} are enabled in notifications.yaml"
             )
 
-        templates_to_check = [profile.notifications.template, profile.notifications.title]
+        templates_to_check = [
+            profile.notifications.template,
+            profile.notifications.title,
+            profile.notifications.stale_template,
+            profile.notifications.recovered_template,
+            profile.notifications.switch_failed_template,
+            profile.notifications.switch_unconfirmed_template,
+        ]
         for rule in profile.active_rules():
             if rule.notify_template:
                 templates_to_check.append(rule.notify_template)
@@ -538,6 +559,7 @@ def validate(profile):
             "profile", "rule", "action", "action_word", "source_name", "source_model",
             "source_serial", "target_name", "target_model", "target_host",
             "target_channel", "condition", "time", "clock", "reason", "event",
+            "last_seen", "outage", "attempted", "actual",
         }
         for template in templates_to_check:
             for field in notify_module.template_fields(template):
